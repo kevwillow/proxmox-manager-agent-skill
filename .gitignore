@@ -1,0 +1,17 @@
+# Build artifacts
+*.bak
+*.swp
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+
+# Local-only
+*.local
+.env
+.env.local

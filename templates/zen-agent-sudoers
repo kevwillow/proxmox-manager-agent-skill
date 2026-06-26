@@ -1,0 +1,68 @@
+# /etc/sudoers.d/zen-agent
+#
+# Sudoers allowlist for an AI agent managing this Proxmox host.
+# Each line is one allowed command pattern. Anything NOT in this list
+# is denied by sudo at runtime, with an audit log entry.
+#
+# IMPORTANT: validate before installing:
+#   visudo -c -f /etc/sudoers.d/zen-agent
+#
+# Then verify on the host as zen-agent:
+#   sudo -n -l
+#
+# Generate the binary-path section automatically if you're scripting this:
+#   for b in qm pct pvesh pvesm vzdump qmrestore qemu-img pveam ha-manager pve-firewall pveum pvecm; do
+#       P=$(command -v $b)
+#       [[ -n "$P" ]] && echo "zen-agent ALL=(ALL) NOPASSWD: $P *"
+#   done
+
+# --- Proxmox management (paths verified for PVE 9.x on Debian 13) ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qm *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pct *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pvesh *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pvesm *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/vzdump *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qmrestore *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qemu-img *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pveam *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/ha-manager *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pve-firewall *
+
+# --- Storage observation (critical for self-diagnosis) ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/df *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/du *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/lsblk *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/find *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ls *
+zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/blkid *
+
+# --- Service observation ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/journalctl *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/systemctl status *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/systemctl list-units *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
+
+# --- Network observation ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ip *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ss *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ping *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/resolvectl *
+
+# --- User/mount management (for storage workflow only) ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/mount *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/umount *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/mkdir *
+
+# --- Read-only sysinfo ---
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/uname *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/uptime *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/free *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/fstab
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/network/interfaces
+
+# --- Audit: every invocation logged ---
+Defaults!zen-agent LOG_INPUT
+Defaults!zen-agent LOG_OUTPUT
+Defaults log_output
+Defaults!zen-agent env_reset
+Defaults!zen-agent always_set_home
