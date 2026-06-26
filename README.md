@@ -55,6 +55,7 @@ directories into the right place for your agent:
 | Claude Code | `~/.claude/skills/proxmox-manager-agent/` |
 | Codex CLI | `~/.codex/skills/proxmox-manager-agent/` |
 | OpenCode | `~/.config/opencode/skills/proxmox-manager-agent/` |
+| OpenClaw | `~/.openclaw/workspace/skills/proxmox-manager-agent/` |
 
 ```bash
 # Example for Hermes
@@ -62,7 +63,15 @@ mkdir -p ~/.hermes/skills/proxmox-manager-agent
 cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/
 cp -r references scripts templates ~/.hermes/skills/proxmox-manager-agent/
 chmod +x ~/.hermes/skills/proxmox-manager-agent/scripts/*.sh
+
+# Example for OpenClaw (note the workspace, not ~/.openclaw/skills/)
+mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent
+cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/
+cp -r references scripts templates ~/.openclaw/workspace/skills/proxmox-manager-agent/
+chmod +x ~/.openclaw/workspace/skills/proxmox-manager-agent/scripts/*.sh
 ```
+
+Verify OpenClaw picked it up: `openclaw skills list | grep proxmox`.
 
 ## Usage
 

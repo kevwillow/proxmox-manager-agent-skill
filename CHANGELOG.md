@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 (2026-06-26)
+
+- Add OpenClaw support to `install.sh` (`--agent openclaw`,
+  `--openclaw-workspace <path>`). OpenClaw workspace path defaults to
+  `~/.openclaw/workspace`; users on the literal Windows-style path
+  (`C:\Users\kev\.openclaw\workspace`) can override with the flag.
+- Update SKILL.md Cross-Agent Compatibility table with OpenClaw notes.
+- Update README.md manual install section with OpenClaw example.
+- Verified OpenClaw picks the skill up via `openclaw skills list`.
+
 ## 1.0.0 (2026-06-26)
 
 Initial public release.
@@ -39,6 +49,6 @@ Initial public release.
 - cluster.md — multi-node, HA, live migration
 
 **Cross-agent:**
-- Single SKILL.md format works in Hermes, Claude Code, Codex, OpenCode
-- install.sh handles all 4 agents (--agent hermes|claude|codex|opencode|all)
-- Validated against Hermes skill conventions and OpenAI agent-skills spec
+- Single SKILL.md format works in Hermes, Claude Code, Codex, OpenCode, OpenClaw
+- install.sh handles all 5 agents (--agent hermes|claude|codex|opencode|openclaw|all)
+- Validated against Hermes skill conventions, OpenAI agent-skills spec, and OpenClaw skills list

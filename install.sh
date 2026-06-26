@@ -8,6 +8,7 @@
 #   ./install.sh --agent hermes,claude    # install for multiple agents
 #   ./install.sh --agent all              # explicit "all"
 #   ./install.sh --agent claude --prefix /opt   # install to /opt/<user>/.claude/skills/...
+#   ./install.sh --openclaw-workspace /path/to/openclaw/workspace  # override OpenClaw path
 #   ./install.sh --uninstall              # remove from all agents
 #   ./install.sh --uninstall --agent hermes  # remove from one agent
 #   ./install.sh --list                   # show what would be installed where
@@ -17,6 +18,7 @@
 #   claude    -> ~/.claude/skills/proxmox-manager-agent/
 #   codex     -> ~/.codex/skills/proxmox-manager-agent/
 #   opencode  -> ~/.config/opencode/skills/proxmox-manager-agent/
+#   openclaw  -> $OPENCLAW_WORKSPACE/skills/proxmox-manager-agent/  (default ~/.openclaw/workspace)
 #
 # What gets installed:
 #   SKILL.md                              -> the skill itself
@@ -26,15 +28,53 @@
 set -euo pipefail
 
 # --- Defaults ---
-AGENTS="hermes,claude,codex,opencode"
+AGENTS="hermes,claude,codex,opencode,openclaw"
 ACTION="install"
 PREFIX="$HOME"
+
+# Try to auto-detect the actual OpenClaw workspace from its config.
+# Falls back to the default path if not configured or the config isn't readable.
+# Common config locations: top-level "workspace", "agent.workspace",
+# "agents.defaults.workspace", "agents.<name>.workspace".
+OPENCLAW_WORKSPACE=""
+if [[ -f "$HOME/.openclaw/openclaw.json" ]]; then
+    detected=$(python3 -c "
+import json, sys
+def find_ws(obj):
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if k == 'workspace' and isinstance(v, str) and v:
+                return v
+            r = find_ws(v)
+            if r:
+                return r
+    if isinstance(obj, list):
+        for item in obj:
+            r = find_ws(item)
+            if r:
+                return r
+    return None
+try:
+    with open('$HOME/.openclaw/openclaw.json') as f:
+        cfg = json.load(f)
+    ws = find_ws(cfg)
+    if ws:
+        print(ws)
+except Exception:
+    pass
+" 2>/dev/null)
+    if [[ -n "$detected" && -d "$detected" ]]; then
+        OPENCLAW_WORKSPACE="$detected"
+    fi
+fi
+OPENCLAW_WORKSPACE="${OPENCLAW_WORKSPACE:-$HOME/.openclaw/workspace}"
 
 # --- Parse args ---
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --agent)   AGENTS="$2"; shift 2 ;;
         --prefix)  PREFIX="$2"; shift 2 ;;
+        --openclaw-workspace) OPENCLAW_WORKSPACE="$2"; shift 2 ;;
         --uninstall) ACTION="uninstall"; shift 1 ;;
         --list)    ACTION="list"; shift 1 ;;
         -h|--help)
@@ -46,6 +86,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Expand --agent all to the full list
+if [[ "$AGENTS" == "all" ]]; then
+    AGENTS="hermes,claude,codex,opencode,openclaw"
+fi
+
 # --- Resolve agent paths ---
 agent_path() {
     local agent="$1"
@@ -54,8 +99,9 @@ agent_path() {
         claude)   echo "$PREFIX/.claude/skills/proxmox-manager-agent" ;;
         codex)    echo "$PREFIX/.codex/skills/proxmox-manager-agent" ;;
         opencode) echo "$PREFIX/.config/opencode/skills/proxmox-manager-agent" ;;
+        openclaw) echo "$OPENCLAW_WORKSPACE/skills/proxmox-manager-agent" ;;
         *)
-            echo "ERROR: unknown agent: $agent (valid: hermes, claude, codex, opencode)" >&2
+            echo "ERROR: unknown agent: $agent (valid: hermes, claude, codex, opencode, openclaw)" >&2
             return 1
             ;;
     esac
@@ -83,6 +129,14 @@ do_install() {
     local agent="$1"
     local target
     target="$(agent_path "$agent")" || return 1
+
+    # For OpenClaw, the workspace is at $OPENCLAW_WORKSPACE/skills/
+    # Make sure the workspace exists; create it if missing.
+    if [[ "$agent" == "openclaw" && ! -d "$OPENCLAW_WORKSPACE" ]]; then
+        echo "[$agent] Workspace not found at $OPENCLAW_WORKSPACE"
+        echo "[$agent] Run 'openclaw onboard' first, or pass --openclaw-workspace to specify another path."
+        return 1
+    fi
 
     echo "[$agent] Installing to $target ..."
     mkdir -p "$target/references" "$target/scripts" "$target/templates"
@@ -143,6 +197,9 @@ do_list() {
             echo "  [$agent] $target (will install)"
         fi
     done
+    if [[ "AGENTS" == *"openclaw"* ]]; then
+        echo "  OpenClaw workspace: $OPENCLAW_WORKSPACE"
+    fi
     echo
     echo "Files to install:"
     echo "  SKILL.md ($(wc -c < "$SKILL_SRC" 2>/dev/null || echo 'MISSING') bytes)"

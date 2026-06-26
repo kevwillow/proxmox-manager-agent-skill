@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent via scoped SSH access. Covers VM and LXC lifecycle (create, start, stop, snapshot, destroy), storage management (ISO upload, LVM-thin/ZFS/dir pools), backup/restore (vzdump, PBS), network bridges, firewall, cluster operations, and the PVE 9.x gotchas (binary path splits, --is_mountpoint no re-index, NVMe-shuffle, broken DNS on fresh installs). Includes a fully specified sudoers whitelist/blacklist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.0.0
+version: 1.0.1
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -815,8 +815,22 @@ This skill is designed to work with any agent that loads
 | Claude Code | `~/.claude/skills/<name>/SKILL.md` | Loaded by Claude Code when SKILL.md is present. |
 | Codex CLI | `~/.codex/skills/<name>/SKILL.md` | Auto-loads from description. |
 | OpenCode | `~/.config/opencode/skills/<name>/SKILL.md` | Uses OpenAI agent-skills format. |
+| OpenClaw | `<workspace>/skills/<name>/SKILL.md` | Auto-loads. Workspace default `~/.openclaw/workspace`. For users on the literal Windows-style path (`C:\Users\kev\.openclaw\workspace`), pass `--openclaw-workspace` to `install.sh`. |
 | Paperclip | (agent-specific) | Check Paperclip docs for skill path. |
 
-Run `./install.sh --agent all` to install into all four at once, or
+Run `./install.sh --agent all` to install into all five at once, or
 `./install.sh --agent hermes` for one. The script copies the SKILL.md and
 supporting files into the right directory structure for each agent.
+
+OpenClaw notes:
+- The user-authored skill format is just `SKILL.md` in a directory — no
+  `_meta.json` or `.clawhub/` needed.
+- If the skill is later published to ClawHub, those files are added
+  by the registry on install.
+- The skill must have `name:` and `description:` in the frontmatter.
+  Description is shown to the agent and in slash-command discovery —
+  keep it under 160 chars for OpenClaw (we're at 722, which is fine
+  for the canonical SKILL.md; the auto-discovery only uses the first
+  line of the description).
+- `openclaw skills list` shows the loaded skills. Source column will
+  read `openclaw-workspace` after install.
