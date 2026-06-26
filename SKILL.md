@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent via scoped SSH access. Covers VM and LXC lifecycle (create, start, stop, snapshot, destroy), storage management (ISO upload, LVM-thin/ZFS/dir pools), backup/restore (vzdump, PBS), network bridges, firewall, cluster operations, and the PVE 9.x gotchas (binary path splits, --is_mountpoint no re-index, NVMe-shuffle, broken DNS on fresh installs). Includes a fully specified sudoers whitelist/blacklist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.0.1
+version: 1.0.2
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -816,9 +816,10 @@ This skill is designed to work with any agent that loads
 | Codex CLI | `~/.codex/skills/<name>/SKILL.md` | Auto-loads from description. |
 | OpenCode | `~/.config/opencode/skills/<name>/SKILL.md` | Uses OpenAI agent-skills format. |
 | OpenClaw | `<workspace>/skills/<name>/SKILL.md` | Auto-loads. Workspace default `~/.openclaw/workspace`. For users on the literal Windows-style path (`C:\Users\kev\.openclaw\workspace`), pass `--openclaw-workspace` to `install.sh`. |
+| Cursor | `~/.cursor/skills/<name>/SKILL.md` | Auto-loads. Bundled Cursor skills live in `~/.cursor/skills-cursor/`; user-installed skills go in `~/.cursor/skills/`. |
 | Paperclip | (agent-specific) | Check Paperclip docs for skill path. |
 
-Run `./install.sh --agent all` to install into all five at once, or
+Run `./install.sh --agent all` to install into all six at once, or
 `./install.sh --agent hermes` for one. The script copies the SKILL.md and
 supporting files into the right directory structure for each agent.
 

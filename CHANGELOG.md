@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 (2026-06-26)
+
+- Add Cursor support to `install.sh` (`--agent cursor`).
+  Cursor skills live at `~/.cursor/skills/<name>/SKILL.md`.
+- Bump version to 1.0.2.
+- Update SKILL.md and README.md Cross-Agent Compatibility tables.
+
 ## 1.0.1 (2026-06-26)
 
 - Add OpenClaw support to `install.sh` (`--agent openclaw`,

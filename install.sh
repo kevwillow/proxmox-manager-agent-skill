@@ -19,6 +19,7 @@
 #   codex     -> ~/.codex/skills/proxmox-manager-agent/
 #   opencode  -> ~/.config/opencode/skills/proxmox-manager-agent/
 #   openclaw  -> $OPENCLAW_WORKSPACE/skills/proxmox-manager-agent/  (default ~/.openclaw/workspace)
+#   cursor    -> ~/.cursor/skills/proxmox-manager-agent/
 #
 # What gets installed:
 #   SKILL.md                              -> the skill itself
@@ -88,7 +89,7 @@ done
 
 # Expand --agent all to the full list
 if [[ "$AGENTS" == "all" ]]; then
-    AGENTS="hermes,claude,codex,opencode,openclaw"
+    AGENTS="hermes,claude,codex,opencode,openclaw,cursor"
 fi
 
 # --- Resolve agent paths ---
@@ -100,8 +101,9 @@ agent_path() {
         codex)    echo "$PREFIX/.codex/skills/proxmox-manager-agent" ;;
         opencode) echo "$PREFIX/.config/opencode/skills/proxmox-manager-agent" ;;
         openclaw) echo "$OPENCLAW_WORKSPACE/skills/proxmox-manager-agent" ;;
+        cursor)   echo "$PREFIX/.cursor/skills/proxmox-manager-agent" ;;
         *)
-            echo "ERROR: unknown agent: $agent (valid: hermes, claude, codex, opencode, openclaw)" >&2
+            echo "ERROR: unknown agent: $agent (valid: hermes, claude, codex, opencode, openclaw, cursor)" >&2
             return 1
             ;;
     esac
