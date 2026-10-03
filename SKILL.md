@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
-description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent via scoped SSH access. Covers VM and LXC lifecycle (create, start, stop, snapshot, destroy), storage management (ISO upload, LVM-thin/ZFS/dir pools), backup/restore (vzdump, PBS), network bridges, firewall, cluster operations, and the PVE 9.x gotchas (binary path splits, --is_mountpoint no re-index, NVMe-shuffle, broken DNS on fresh installs). Includes a fully specified sudoers whitelist/blacklist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.0.2
+description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through an admin PVE API token plus root SSH, or a scoped SSH user. Covers VM and LXC lifecycle, ISO and storage management, backup/restore, network bridges, firewall, cluster operations, and PVE 9.x gotchas. Includes an admin bootstrap recipe and sudoers allowlist/blacklist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
+version: 1.1.0
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -15,11 +15,12 @@ metadata:
 
 Operational skill for managing a Proxmox VE host (single-node or small cluster)
 from any AI agent — Hermes, Claude Code, Codex, OpenCode, or any headless
-runner — via scoped SSH access. The security model (dedicated agent user,
-sudoers allowlist, key-only auth, IP allowlist, audit trail, one-command
-revoke) lives in the `scoped-agent-ssh-access` skill. **This skill assumes that
-is already set up.** This skill is the *operational* side: which commands to
-run, in what order, with what pitfall-avoidance.
+runner. It supports the admin API-token plus root SSH model and the scoped SSH
+model. The scoped security model (dedicated agent user, sudoers allowlist,
+key-only auth, IP allowlist, audit trail, one-command revoke) lives in the
+`scoped-agent-ssh-access` skill. **This skill assumes that is already set up**
+for Mode B. This skill is the *operational* side: which commands to run, in
+what order, with what pitfall-avoidance.
 
 ## When to Use
 
@@ -33,6 +34,94 @@ run, in what order, with what pitfall-avoidance.
 directly), non-Proxmox virtualization (KVM/libvirt without PVE wrapper, Xen,
 ESXi), or anything where the user has not yet established scoped SSH access —
 that's a prerequisite, not a part of this skill.
+
+## Access modes
+
+### Mode A: Admin (recommended when the user wants the agent to fully manage VMs)
+
+Use a PVE user `<agent>@pve` with the `Administrator` role on `/` and an API
+token with `privsep=0` for everything the API covers. Add a dedicated root SSH
+key for host-level work the API cannot do, including root@pam-only VM options
+such as `args` and `hookscript`, host packages, and `/etc/network/interfaces`.
+
+Bootstrap this mode as follows:
+
+1. Save the root@pam password in a mode-600 file, for example
+   `~/.config/pve/<host>.password`; never put it on a command line.
+2. Pin the host certificate and request a ticket. `-k` is needed for the
+   self-signed certificate, while `--pinnedpubkey` still enforces the pin.
+
+   ```bash
+   PIN=$(echo | openssl s_client -connect $H:8006 2>/dev/null | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64)
+   curl -s -k --pinnedpubkey "sha256//$PIN" https://$H:8006/api2/json/access/ticket \
+     --data-urlencode 'username=root@pam' --data-urlencode "password@$PWFILE"
+   ```
+
+3. With cookie `PVEAuthCookie=<ticket>` and header
+   `CSRFPreventionToken: <csrf>`, create the user and grant it access:
+
+   ```text
+   POST /access/users            userid=<agent>@pve
+   PUT  /access/acl              path=/ users=<agent>@pve roles=Administrator propagate=1
+   POST /access/users/<agent>@pve/token/agent   privsep=0
+   ```
+
+   The final response's `.data.value` is the token secret and is shown only
+   once. Write the whole header value straight to a mode-600 file without
+   printing it, and save the pin (with its `sha256//` prefix) the same way:
+
+   ```bash
+   install -m 600 /dev/null ~/.config/pve/<host>.token
+   jq -j '"PVEAPIToken=\(.data["full-tokenid"])=\(.data.value)"' token-response.json > ~/.config/pve/<host>.token
+   rm token-response.json
+   install -m 600 /dev/null ~/.config/pve/<host>.pin
+   printf 'sha256//%s' "$PIN" > ~/.config/pve/<host>.pin
+   ```
+4. Install the root SSH key without `sshpass`, using OpenSSH askpass. On PVE,
+   `/root/.ssh/authorized_keys` is a symlink to
+   `/etc/pve/priv/authorized_keys`.
+
+   ```bash
+   SSH_ASKPASS=<script-that-cats-the-password-file> SSH_ASKPASS_REQUIRE=force DISPLAY=x \
+     setsid -w ssh -o PubkeyAuthentication=no root@$H 'cat >> /root/.ssh/authorized_keys'
+   ```
+
+5. Delete the password file.
+
+Use the token through a pinned HTTPS helper. Node names are case-sensitive and
+must be read from `GET /nodes`; the measured host's node was `Apollo`.
+
+```bash
+pve_api() {
+  local method=$1 path=$2
+  shift 2
+  curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/<host>.pin)" \
+    -H "Authorization: $(cat ~/.config/pve/<host>.token)" \
+    -X "$method" "https://<host>:8006/api2/json$path" "$@"
+}
+
+# Most writes return a task id (UPID). Wait for it before the next step:
+pve_wait() {
+  local u; u=$(jq -rn --arg u "$1" '$u|@uri')
+  until pve_api GET "/nodes/<node>/tasks/$u/status" | jq -e '.data.status=="stopped"' >/dev/null; do sleep 3; done
+  pve_api GET "/nodes/<node>/tasks/$u/status" | jq -r '.data.exitstatus'   # "OK" on success
+}
+
+pve_api GET '/cluster/resources?type=vm'
+pve_api GET '/nodes/Apollo/status'
+pve_api POST '/nodes/Apollo/qemu' --data-urlencode 'vmid=<vmid>' --data-urlencode 'name=<name>'
+pve_api POST '/nodes/Apollo/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>'
+pve_api POST '/nodes/Apollo/qemu/<vmid>/status/start'
+```
+
+### Mode B: Scoped SSH user
+
+This is the existing `zen-agent` model: a dedicated non-root SSH user with a
+sudoers allowlist, key-only authentication, source-IP restriction, and audit
+trail. It is described in the architecture and command sections below.
+
+The confirmation policy, including the soft blacklist, applies in BOTH modes.
+Admin rights change what the agent CAN do, not what it does without asking.
 
 ## Architecture
 
@@ -54,10 +143,11 @@ that's a prerequisite, not a part of this skill.
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The agent never logs in as root. It never has a root password. Every action
-goes through the scoped user with a sudoers allowlist. A leaked key still
-requires the right source IP and the agent user still exists with the same
-blast radius.
+For Mode B only, the agent never logs in as root and never has a root password.
+Every action goes through the scoped user with a sudoers allowlist. A leaked key
+still requires the right source IP and the agent user still exists with the same
+blast radius. This allowlist is ROOT-EQUIVALENT, so it is an audit trail and a
+speed bump rather than containment. See *Access modes* for Mode A.
 
 ## The Command Surface
 
@@ -69,19 +159,20 @@ blast radius.
 | `pct` | `/usr/sbin/pct` | LXC container management |
 | `pvesh` | **`/usr/bin/pvesh`** | Proxmox API CLI (preferred for scripted ops) |
 | `pvesm` | `/usr/sbin/pvesm` | Storage manager |
-| `vzdump` | `/usr/sbin/vzdump` | Backup |
-| `qemu-img` | `/usr/sbin/qemu-img` | Raw disk image operations |
+| `vzdump` | `/usr/bin/vzdump` | Backup |
+| `qemu-img` | `/usr/bin/qemu-img` | Raw disk image operations |
 | `pveum` | `/usr/sbin/pveum` | User/permission manager |
-| `pvecm` | `/usr/sbin/pvecm` | Cluster manager |
+| `pvecm` | `/usr/bin/pvecm` | Cluster manager |
 | `ha-manager` | `/usr/sbin/ha-manager` | HA (high availability) manager |
 | `pve-firewall` | `/usr/sbin/pve-firewall` | Firewall rules compiler |
 | `pveam` | `/usr/bin/pveam` | Appliance manager (templates, ISOs) |
 | `qmrestore` | `/usr/sbin/qmrestore` | Restore from vzdump backup |
+| `vma` | `/usr/bin/vma` | VMA archive verification |
 
-**The `pvesh` and `pvesm` paths are the gotcha.** Most Proxmox docs and
-tutorials list them in `/usr/sbin/`, but on PVE 8/9 they live in `/usr/bin/`.
-A sudoers rule with the wrong path silently falls through to "ask for a
-password" — see `scoped-agent-ssh-access` for the diagnose-and-fix recipe.
+`pvesh`, `pveam`, `vzdump`, `qemu-img` and `pvecm` are in `/usr/bin` on PVE
+9.x; most tutorials list `/usr/sbin`. A sudoers rule with the wrong path
+silently falls through to "ask for a password"; see
+`scoped-agent-ssh-access` for the diagnose-and-fix recipe.
 
 Always verify on a fresh host before writing sudoers:
 ```bash
@@ -132,9 +223,9 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qm *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pct *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pvesh *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pvesm *
-zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/vzdump *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/vzdump *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qmrestore *
-zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qemu-img *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/qemu-img *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pveam *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/ha-manager *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pve-firewall *
@@ -172,10 +263,7 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/fstab
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/network/interfaces
 
 # --- Audit: every invocation logged ---
-Defaults!zen-agent LOG_INPUT
-Defaults!zen-agent LOG_OUTPUT
-Defaults log_output
-Defaults!zen-agent env_reset
+Defaults:zen-agent log_input, log_output, env_reset, always_set_home
 ```
 
 A copy of this file is at `templates/zen-agent-sudoers` — copy to
@@ -206,10 +294,13 @@ to need them.
 | `iptables`, `nft` directly | Use `pve-firewall` API instead. |
 | `rm -rf /` | Obviously. Don't include `rm` at all if avoidable — agents rarely need to delete files. |
 
-The pattern: **observe freely, manage Proxmox state freely, but
-destructive disk operations and host-state changes require a human in the
-loop.** This keeps the blast radius at "VM/container state" not "host
-state."
+The pattern: **observe freely, manage Proxmox state freely, but destructive
+disk operations and host-state changes require a human in the loop.** This
+allowlist is ROOT-EQUIVALENT, not containment: `find *` allows `-exec` of any
+command as root, `pvesh *` runs as root@pam and can create users and ACLs,
+`mount *` can mount over system paths, and `qm *` can set hookscripts. It is an
+audit trail and a speed bump. If real containment is needed, use a PVE API token
+with a narrow role, for example `PVEVMAdmin` on `/vms`, instead of sudo.
 
 ### Soft blacklist (in sudoers, but agent refuses without explicit user OK)
 
@@ -287,11 +378,19 @@ sudo -n mount /dev/sdX1 /mnt/source
 # Verify perms (sudoers must include /usr/bin/ls)
 sudo -n ls /mnt/source/
 
-# Copy. Proxmox default 'local' storage is /var/lib/vz/template/iso
-sudo -n cp /mnt/source/*.iso /var/lib/vz/template/iso/
+# Copy, run as root (user in Mode B, root SSH in Mode A).
+# A dir storage's ISO directory is <path>/template/iso/.
+mkdir -p <path>/template/iso
+cp /mnt/source/*.iso <path>/template/iso/
 
 # Verify via pvesh
-sudo -n pvesh get /nodes/localhost/storage/local/content --content iso
+pvesh get /nodes/<node>/storage/<storage>/content --content iso
+```
+
+The API can fetch an ISO straight onto the host:
+
+```text
+POST /nodes/<node>/storage/<storage>/download-url  content=iso filename=<name> url=<url> [checksum=<sum> checksum-algorithm=sha256]
 ```
 
 **Always check `df -h /` before a bulk copy.** Ventoy USBs can easily hold
@@ -300,7 +399,7 @@ much free. The `scripts/iso-import.sh` wrapper enforces this with a hard
 pre-flight abort.
 
 **Strongly prefer copying ISOs to a dedicated NVMe storage pool
-(`/mnt/iso`) rather than `/var/lib/vz/template/iso/` on the boot disk.**
+(`/mnt/iso/template/iso/`) rather than `/var/lib/vz/template/iso/` on the boot disk.**
 A 9-ISO Ventoy stick can easily total 30-60GB; the Proxmox boot disk is
 typically 60-70GB total, so a single copy fills it from 8% to 100% and
 breaks the system. See *Adding dedicated storage pools* below.
@@ -352,14 +451,18 @@ sudo mount /dev/nvmeXnYp1 /mnt/<label>
 df -h /mnt/<label>     # verify the FULL partition size, NOT 458MB
 ```
 
-**Step 5: Agent adds UUID-based fstab entry (NEVER `/dev/nvmeXnYp1`).**
+**Step 5: Add a UUID-based fstab entry (NEVER `/dev/nvmeXnYp1`) as root
+(user in Mode B, root SSH in Mode A).**
 
 ```bash
 UUID=$(blkid -s UUID -o value /dev/nvmeXnYp1)
-echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" >> /etc/fstab
+echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
 mount -a
 df -h | grep <label>
 ```
+
+The shell redirects `>>` before sudo runs, so `tee` needs root to append to
+`/etc/fstab`.
 
 NVMe device numbers (`nvme0n1`, `nvme1n1`, ...) are assigned by kernel
 discovery order and can shuffle on every reboot, especially after disks are
@@ -374,22 +477,70 @@ device path is not. UUIDs are stable. Always use `UUID=` or `LABEL=` in
 sudo -n pvesm add dir <name> --path /mnt/<label> --content <types> --is_mountpoint yes
 ```
 
-After files are copied into the path, force Proxmox to scan and index the
-contents:
+For ISO content in a `dir` storage, create the required subdirectory and copy
+files there:
 
 ```bash
-sudo -n pvesm set <name> --is_mountpoint no
-sudo -n pvesm list <name>   # verify files are indexed
+mkdir -p /mnt/<label>/template/iso
+# Copy as root (user in Mode B, root SSH in Mode A).
+cp <source>.iso /mnt/<label>/template/iso/
+sudo -n pvesm list <name>   # verifies content discovered by directory scan
 ```
 
-There is no `pvesm scan <name>` subcommand on PVE 9.x — its purpose was
-folded into the `set` command's `--is_mountpoint` toggle. Proxmox doesn't
-auto-scan mount-point-backed storage, which is why `pvesm list` returns
-empty even when `ls` shows files at the path. The web UI's "Create VM →
-ISO" dropdown won't show the storage's contents until `pvesm list` does.
+Proxmox keeps no index for `dir` storage; it scans the content-specific
+subdirectories on each request. Files outside `template/iso/` are simply not
+listed as ISOs. `--is_mountpoint yes` only marks the storage inactive when the
+path is not a mount point; it does not rescan anything.
 
 The `scripts/add-nvme-storage.sh` wrapper runs this full pipeline with
 explicit prompts at every destructive step.
+
+### Creating dev VMs fast: cloud-init template + clone
+
+Use a cloud-init template when you want a development VM without a console:
+the SSH key is injected at first boot and clones take seconds.
+
+Verified end to end on PVE 9.2.2 with the Ubuntu 26.04 cloud image (2026-10-03),
+using the Mode A helpers above. Each write returns a UPID; `pve_wait` it.
+
+```bash
+# 1. Fetch the image onto the host, checksum-verified. Saved with a .qcow2 name.
+pve_api POST /nodes/<node>/storage/local/download-url \
+  --data-urlencode content=import --data-urlencode filename=ubuntu-26.04-server-cloudimg-amd64.qcow2 \
+  --data-urlencode url=https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img \
+  --data-urlencode checksum=<sha256 from SHA256SUMS> --data-urlencode checksum-algorithm=sha256
+
+# 2. Cloud images ship without qemu-guest-agent. A vendor snippet installs it,
+#    which is what makes /agent/network-get-interfaces report the VM's IP.
+pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets
+ssh root@<host> 'mkdir -p /var/lib/vz/snippets; printf "#cloud-config\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n" > /var/lib/vz/snippets/vendor-guest-agent.yaml'
+
+# 3. Template VM. sshkeys must be URL-encoded BEFORE --data-urlencode encodes it again.
+KEYS=$(cat ~/.ssh/id_ed25519.pub | jq -sRr @uri)
+pve_api POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name=ubuntu-2604-tmpl \
+  --data-urlencode memory=2048 --data-urlencode cores=2 --data-urlencode cpu=host --data-urlencode ostype=l26 \
+  --data-urlencode scsihw=virtio-scsi-single \
+  --data-urlencode 'scsi0=local-lvm:0,import-from=local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2,discard=on,ssd=1,iothread=1' \
+  --data-urlencode ide2=local-lvm:cloudinit --data-urlencode boot=order=scsi0 \
+  --data-urlencode serial0=socket --data-urlencode vga=serial0 --data-urlencode agent=enabled=1 \
+  --data-urlencode net0=virtio,bridge=vmbr0 --data-urlencode ciuser=<user> --data-urlencode "sshkeys=$KEYS" \
+  --data-urlencode ipconfig0=ip=dhcp --data-urlencode cicustom=vendor=local:snippets/vendor-guest-agent.yaml
+pve_api POST /nodes/<node>/qemu/9000/template
+
+# 4. Per dev VM: full clone, size, start.
+pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
+  --data-urlencode full=1 --data-urlencode storage=local-lvm
+pve_api PUT  /nodes/<node>/qemu/<vmid>/config --data-urlencode cores=4 --data-urlencode memory=8192 --data-urlencode onboot=1
+pve_api PUT  /nodes/<node>/qemu/<vmid>/resize --data-urlencode disk=scsi0 --data-urlencode size=64G
+pve_api POST /nodes/<node>/qemu/<vmid>/status/start
+
+# 5. The IP appears once cloud-init has installed the agent (about a minute).
+pve_api GET /nodes/<node>/qemu/<vmid>/agent/network-get-interfaces |
+  jq -r '[.data.result[] | select(.name!="lo") | .["ip-addresses"][] | select(.["ip-address-type"]=="ipv4") | .["ip-address"]][0]'
+```
+
+cloud-init grows the root filesystem to the resized disk on first boot. The
+`qm` CLI equivalents are in `references/vm-creation-cheatsheet.md`.
 
 ### Creating a VM from an ISO
 
@@ -488,10 +639,12 @@ original VMID) or `pct restore`. The agent should always verify the backup
 file's integrity first:
 
 ```bash
-sudo -n vzdump --verify <backup-file>     # not always supported
-# Or check the .log sidecar
-ls -la /var/lib/vz/dump/vzdump-*.log*
+zstd -dc vzdump-qemu-<vmid>-<ts>.vma.zst > /tmp/check.vma && vma verify /tmp/check.vma -v && rm /tmp/check.vma
 ```
+
+This needs free space equal to the uncompressed size. A restore to a scratch
+VMID, for example `qmrestore <file> <unused-vmid> --storage local-lvm`, is the
+real test.
 
 ### Firewall (`pve-firewall`)
 
@@ -512,9 +665,10 @@ sudo -n pvesh get /nodes/<node>/firewall/rules
 sudo -n pvesh set /nodes/<node>/firewall --enable 1
 ```
 
-**Default behavior on a fresh PVE install:** firewall is enabled at the
-cluster and datacenter level but rules only allow SSH (22) and the web UI
-(8006) inbound. Anything else needs a rule added. See
+**Default behavior on a fresh PVE install:** firewall is OFF by default at the
+datacenter level. Once enabled, the default input policy is DROP, with SSH (22)
+and the web UI (8006) allowed from the local network through the management
+IPSet. See
 `references/firewall-basics.md` for the full cluster/node/VM firewall
 hierarchy.
 
@@ -552,17 +706,17 @@ depends on what changed:
 | Snapshotted VM | `qm snapshot <vmid>` lists the new snapname |
 | Created LXC | `pct list`, then `pct status <ctid>` |
 | Added storage | `pvesm status` shows the new storage, `df -h /mnt/<mount>` shows correct size |
-| Imported ISO | `ls /var/lib/vz/template/iso/` shows the file, `pvesh get /nodes/.../storage/local/content --content iso` indexes it |
+| Imported ISO | `ls /var/lib/vz/template/iso/` shows the file, `pvesh get /nodes/.../storage/local/content --content iso` lists it |
 | Created backup | `ls /var/lib/vz/dump/` shows the .vma.zst file |
 | Restored backup | `qm list` shows new VMID, `qm status <new-vmid>` reports running |
 | Edited firewall | `pvesh get /nodes/<node>/firewall/rules` shows the new rule, test from allowed source |
 
 **Always verify the *full* state, not just the immediate operation.**
 A common failure mode is the operation succeeding but a downstream effect
-(notify, index, replication) silently failing. Example: `pvesm add dir`
-succeeds but the web UI dropdown doesn't show the storage until you toggle
-`--is_mountpoint no` and back. The Verify column above is the "did this
-actually take effect everywhere" check.
+(notify, content placement, replication) silently failing. Example: `pvesm add
+dir` succeeds but an ISO copied outside `template/iso/` does not appear in the
+web UI dropdown. The Verify column above is the "did this actually take effect
+everywhere" check.
 
 ## Common Pitfalls
 
@@ -573,10 +727,9 @@ running the corresponding operation.
 
 The help banner shows `scan cifs/iscsi/lvm/lvmthin/nfs/pbs/zfs` only. Older
 docs and AI agents trained on PVE 7/8 will tell you to use
-`pvesm scan iso` to refresh the storage index — that command doesn't exist
-anymore. The PVE 9.x equivalent for re-indexing a `dir` storage is
-`pvesm set <storage> --is_mountpoint no`. Even that doesn't reliably
-populate the index on a fresh install — see pitfall #9.
+`pvesm scan iso` to refresh a storage index, but that command does not exist.
+`dir` storage has no index: Proxmox scans its required content directories on
+each request. For ISO content, use `<path>/template/iso/`; see pitfall #4.
 
 ### 2. The `enterprise.proxmox.com` repos fail with 401 Unauthorized on every `apt update`
 
@@ -604,15 +757,14 @@ self-diagnose. Prevention beats recovery:
 
 ### 4. `pvesm list <name>` returns empty even though files are on disk
 
-Proxmox doesn't auto-scan mount-point-backed storage. After
-`pvesm add dir <name> --is_mountpoint yes` and `cp` of files into the
-storage path, `pvesm list <name>` will show the column headers but no rows
-even though `ls` shows files at the path.
+For a `dir` storage, Proxmox lists ISOs only from `<path>/template/iso/`.
+If a file was copied to the storage root, `pvesm list <name>` will show no
+ISO even though `ls` shows the file.
 
-Fix: `sudo -n pvesm set <name> --is_mountpoint no`. Proxmox scans the path
-on the next access and indexes existing files. There is no
-`pvesm scan <name>` subcommand on PVE 9.x — its purpose was folded into
-the `set` command's `--is_mountpoint` toggle.
+Fix: `mkdir -p <path>/template/iso` and move or copy the ISO there. There is
+no content index to refresh: Proxmox scans that directory on each request.
+`--is_mountpoint yes` is a mount check only; it marks the storage inactive if
+the path is not mounted and does not rescan content.
 
 ### 5. Storage pool shows correct `df` size but the wrong files
 
@@ -635,13 +787,12 @@ The kernel had stale partition geometry. Reboot, run `partprobe`
 `mkfs.ext4 -F /dev/nvmeXnYp1` — the `-F` forces overwrite and the kernel
 now sees the correct size.
 
-### 7. `cp ... /mnt/iso/` asks for a password even though sudoers has the rule
+### 7. ISO copy needs root even though sudoers does not allow `cp`
 
-Sudoers path matching is exact-character. A rule specifying
-`/usr/bin/cp ... /mnt/iso` matches a call to `cp ... /mnt/iso` but NOT
-`cp ... /mnt/iso/` (with trailing slash). Drop the trailing slash or
-rewrite the rule to include the slash. Verify with
-`sudo -n -l /usr/bin/cp`.
+The Mode B allowlist intentionally does not permit `cp`, so an ISO upload must
+run as root: the user runs it in Mode B, or the agent uses root SSH in Mode A.
+For a `dir` storage, create and use `/mnt/iso/template/iso/`, not the storage
+root. Verify the destination with `pvesh get /nodes/<node>/storage/<storage>/content --content iso`.
 
 ### 8. `qm list` returns empty — is the agent broken?
 
@@ -723,16 +874,17 @@ This is the DNS-broken symptom (above). The error is at the network
 layer, not the apt layer. Don't waste time on apt config; fix the network
 first.
 
-### 15. Agent's sudoers has wrong path for `pvesh` or `pvesm`
+### 15. Agent's sudoers has wrong binary path
 
-On PVE 9.x, `pvesh` is `/usr/bin/pvesh` (NOT `/usr/sbin/pvesh`), and
-`pvesm` is `/usr/sbin/pvesm` (which IS correct). Many tutorials list both
-in `/usr/sbin/`, which silently breaks sudoers rules for `pvesh`. Symptom:
+On PVE 9.x, `pvesh`, `pveam`, `vzdump`, `qemu-img`, and `pvecm` are in
+`/usr/bin`, while `pvesm` remains in `/usr/sbin`. Many tutorials list them
+all in `/usr/sbin`, which silently breaks sudoers rules. Symptom:
 `ssh zen-agent@host 'sudo -n pvesh get /version'` returns
 "a password is required" with no other error.
 
-Fix: `command -v pvesh` on the target. Update the sudoers file to the
-actual path. Verify with `visudo -c -f /etc/sudoers.d/<agent>`.
+Fix: run `command -v` for every sudoers binary on the target. Update the
+sudoers file to the actual paths. Verify with
+`visudo -c -f /etc/sudoers.d/<agent>`.
 
 ### 16. `qm` snapshot succeeded but rollback complains about missing disk
 
@@ -763,8 +915,7 @@ configured.
   Windows 11 (UEFI + TPM + VirtIO), LXC Debian 12. Plus follow-ups
   (resize disk, add NIC, snapshot, detach ISO with `--ide2 none`).
 - `references/firewall-basics.md` — cluster/node/VM firewall hierarchy,
-  common rule patterns, why the default pve-firewall blocks everything
-  except 22 and 8006.
+  common rule patterns, and the default behavior once pve-firewall is enabled.
 - `references/proxmox-api-token.md` — using `pveum token` for
   API-based management as an alternative to SSH + sudo.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
@@ -777,9 +928,8 @@ configured.
 - `scripts/lxc-from-template.sh` — wrapper around `pct create` with the
   common Debian/Ubuntu/Alpine template paths.
 - `scripts/iso-import.sh` — Ventoy USB → Proxmox ISO storage with
-  pre-flight size check (refuses to overflow the target fs), per-file
-  verify, and the `--is_mountpoint no` re-index toggle. Run on the
-  Proxmox host as root.
+  pre-flight size check (refuses to overflow the target fs) and per-file
+  verification. Run on the Proxmox host as root.
 - `scripts/add-nvme-storage.sh` — full pipeline walkthrough: identify
   drives by serial, prompt the user to confirm scope, give fdisk
   instructions for 1-or-2 partition layouts, instruct on mkfs+mount,

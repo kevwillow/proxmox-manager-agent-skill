@@ -9,8 +9,10 @@ through `pvesh`, never edit `/etc/pve/firewall/*.fw` directly.
 `pve-firewall` rules apply at three nested levels. A packet is accepted
 only if it's accepted at *every* level it's traversing.
 
-1. **Cluster (datacenter)** — applies to all nodes and VMs. Default
-   rules here block everything except SSH (22) and the web UI (8006).
+1. **Cluster (datacenter)** — applies to all nodes and VMs. The firewall is
+   OFF by default at this level. Once enabled, the default input policy is
+   DROP, with SSH (22) and the web UI (8006) allowed from the local network
+   through the management IPSet.
 2. **Node (host)** — applies to traffic to/from a specific node.
    Per-node VM bridges can be controlled here.
 3. **VM/LXC** — applies to traffic to/from a specific VM/container's
@@ -68,8 +70,10 @@ Rule fields:
 
 ## Enabling the firewall
 
-Default PVE install: firewall is **enabled** at cluster and datacenter
-level but **disabled** at node and VM level until you flip them.
+Default PVE install: firewall is **OFF** at the datacenter level. Once it is
+enabled, the default input policy is DROP, with SSH (22) and the web UI (8006)
+allowed from the local network through the management IPSet. Node and VM
+firewall settings remain disabled until you flip them.
 
 ```bash
 # Enable at node level
@@ -190,8 +194,8 @@ never edit those without explicit user instruction — the host's primary
 firewall is pve-firewall, and bypassing it can cause subtle breakage.
 
 For the agent's own host-protection, the recommended pattern is:
-1. `pve-firewall` at the cluster/node level (default rules block
-   inbound except 22/8006).
+1. `pve-firewall` at the cluster/node level (once enabled, default input
+   policy is DROP with local-network access to 22/8006).
 2. The host's OS-level firewall (iptables/nft via the host's distro
    config) for additional layers.
 3. SSH hardening (the Match block in templates/99-zen-agent-sshd.conf).

@@ -21,9 +21,9 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qm *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pct *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pvesh *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pvesm *
-zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/vzdump *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/vzdump *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qmrestore *
-zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/qemu-img *
+zen-agent ALL=(ALL) NOPASSWD: /usr/bin/qemu-img *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/pveam *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/ha-manager *
 zen-agent ALL=(ALL) NOPASSWD: /usr/sbin/pve-firewall *
@@ -61,8 +61,4 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/fstab
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/cat /etc/network/interfaces
 
 # --- Audit: every invocation logged ---
-Defaults!zen-agent LOG_INPUT
-Defaults!zen-agent LOG_OUTPUT
-Defaults log_output
-Defaults!zen-agent env_reset
-Defaults!zen-agent always_set_home
+Defaults:zen-agent log_input, log_output, env_reset, always_set_home

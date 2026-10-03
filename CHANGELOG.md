@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0 (2026-10-03)
+
+- Add admin API-token plus root SSH access mode and retain the scoped SSH mode.
+- Correct sudoers Defaults syntax and PVE 9 binary paths.
+- Document the scoped allowlist as root-equivalent rather than containment.
+- Mark unsupported Mode B workflows as root-only and fix the fstab append.
+- Use `template/iso/` for dir storage and remove the false re-index guidance.
+- Correct the fresh-install firewall default to OFF at datacenter level.
+- Replace unsupported `vzdump --verify` with `vma verify` guidance.
+- Correct the PVE 9 binary table and path pitfalls.
+- Promote the cloud-init template and clone workflow, with API commands verified on PVE 9.2.2.
+
 ## 1.0.2 (2026-06-26)
 
 - Add Cursor support to `install.sh` (`--agent cursor`).
