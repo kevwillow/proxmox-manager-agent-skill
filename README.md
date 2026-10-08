@@ -31,7 +31,21 @@ Pick one per host. The confirmation rules apply in every mode.
 Setup for Mode A and A-narrow is in `SKILL.md` (*Access modes*). Setup for
 Mode B is under *Prerequisites* below.
 
-## What's new in 1.3.0
+**With an MCP server.** The skill works alongside a Proxmox MCP server: the
+server makes the API calls, the skill supplies the rules and the pitfalls.
+`references/mcp-servers.md` compares Proximo and ProxmoxMCP-Plus, sets up
+Proximo with a pool-scoped token (`templates/proximo-token-setup.sh`), and
+lists what was measured through it.
+
+## What's new in 1.4.0
+
+- Works alongside a Proxmox MCP server. Proximo was set up and tested live:
+  setup steps, tool map, and the gotchas found through it.
+- `templates/proximo-token-setup.sh`: a token that reads everything and can
+  change only its own pool, measured end to end (a clone outside the pool
+  gets 403).
+
+## What was new in 1.3.0
 
 - Backups: what each check really catches (`vma verify` misses corrupted
   data), and a restore test that cannot clash with the original's IP.
@@ -216,6 +230,7 @@ proxmox-manager-agent-skill/
 │   ├── vm-creation-cheatsheet.md  Ubuntu/Debian/cloud-init/Windows recipes
 │   ├── firewall-basics.md      pve-firewall cluster/node/VM hierarchy
 │   ├── proxmox-api-token.md    API tokens, pool-scoped least privilege
+│   ├── mcp-servers.md          Proximo MCP: setup, tool map, measured gotchas
 │   └── cluster.md              multi-node, HA rules, live migration
 ├── scripts/
 │   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip
@@ -228,7 +243,8 @@ proxmox-manager-agent-skill/
 ├── templates/
 │   ├── zen-agent-sudoers       Drop-in /etc/sudoers.d/zen-agent
 │   ├── 99-zen-agent-sshd.conf  Drop-in sshd Match block
-│   └── install-sudoers.sh      Install + validate the sudoers file
+│   ├── install-sudoers.sh      Install + validate the sudoers file
+│   └── proximo-token-setup.sh  Pool-scoped API token for an MCP server
 └── tests/
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```

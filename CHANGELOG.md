@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.4.0 (2026-10-08)
+
+Measured on PVE 9.2.2 through Proximo 0.44.1 over the MCP protocol.
+
+Added:
+- `references/mcp-servers.md`: Proximo vs ProxmoxMCP-Plus, Proximo setup
+  (pinned install with provenance check, pool-scoped token, pinned node
+  certificate, `proximo doctor`, Claude Code registration), tool map, and
+  measured gotchas: plan-then-confirm, the pool fence (403 outside it),
+  "submitted" is not "done", `kind` defaults to `lxc`, QEMU restore duplicates
+  the original's MAC and SMBIOS UUID, delete backups before their guest.
+- `templates/proximo-token-setup.sh`: the pool-scoped token, parameterised;
+  its command trace matches the run that was tested live.
+- SKILL.md: a short *Using a Proxmox MCP server* section.
+
+Changed:
+- Mode A-narrow is now measured end to end (was "not measured").
+
 ## 1.3.0 (2026-10-07)
 
 Every item below was run on a PVE 9.2.2 host or, for Mode B, on Debian 13.
