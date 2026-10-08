@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through the PVE API (admin or pool-scoped token) plus root SSH, or a scoped SSH user. Covers VM and LXC lifecycle, cloud-init templates and fast clones, ISO and storage management, backup/restore, network bridges with a dead-man revert timer, firewall, cluster operations, and PVE 9.x gotchas. Includes tested API helpers, a least-privilege token recipe, and a sudoers allowlist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'make a template', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.2.0
+version: 1.3.0
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -170,6 +170,22 @@ A dedicated non-root SSH user (the templates call it `zen-agent`) with a
 sudoers allowlist, key-only authentication, source-IP restriction, and audit
 trail. It is described in the architecture and command sections below.
 
+Rehearsed end to end on Debian 13 (PVE 9's base) with the templates:
+
+- **Stock PVE 9 has no `sudo`.** The user installs it first (`apt install
+  sudo`); `templates/install-sudoers.sh` stops with that message otherwise.
+- **Restrict the source IP on the key, not in sshd.** Prefix the key in
+  `authorized_keys` with `from="<agent-ip>",restrict,pty`. Measured: a wrong
+  source IP is refused, `restrict` blocks port forwarding, `pty` keeps a
+  terminal. A `Match User ... Address <range>` block in sshd only changes
+  settings for that range and denies nobody: a login from outside the range
+  still succeeded.
+- **The allowlist really is root-equivalent:**
+  `sudo -n find /tmp -maxdepth 0 -exec id -u \;` printed `0`.
+- **Audit lives in the journal.** PVE 9 has no `/var/log/auth.log`. Use
+  `journalctl _COMM=sudo` for commands and `sudoreplay -l` for the
+  input/output sessions that `log_input, log_output` record.
+
 The confirmation policy, including the soft blacklist, applies in EVERY mode.
 
 ## Architecture
@@ -188,7 +204,7 @@ The confirmation policy, including the soft blacklist, applies in EVERY mode.
 │   user: zen-agent       (or claude-svc, codex-bot, etc.)        │
 │   sudoers: /etc/sudoers.d/<agent>  (NOPASSWD allowlist only)    │
 │   sshd: /etc/ssh/sshd_config.d/99-<agent>.conf  (Match block)   │
-│   audit: /var/log/auth.log   (every sudo invocation logged)     │
+│   audit: journalctl _COMM=sudo; sudoreplay -l (I/O sessions)    │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -297,7 +313,6 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ip *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ss *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ping *
-zen-agent ALL=(ALL) NOPASSWD: /usr/bin/resolvectl *
 
 # --- User/mount management (for storage workflow) ---
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/mount *
@@ -381,7 +396,7 @@ Sudoers (or the token) says yes; the agent layer says "ask first."
 When the user says "spin up a VM," the agent's actual command sequence is:
 
 1. **Verify sudoers covers what we need:** `sudo -n -l | grep -E '^.*NOPASSWD.*qm '` — if this returns nothing, stop and tell the user to install the sudoers file.
-2. **Verify SSH works with key-only:** `ssh -o BatchMode=yes zen-agent@<host> 'whoami'` — if this prompts for a password, stop.
+2. **Verify SSH works with key-only:** `ssh -o BatchMode=yes -o IdentitiesOnly=yes -i <key> zen-agent@<host> 'whoami'` — if this fails, stop (and see pitfall #24 before retrying).
 3. **Verify audit log exists:** `sudo -n -l | grep -i 'log_'` — if no logging is configured, the sudoers install is incomplete; fix before continuing.
 4. **Only then** start running `qm`, `pct`, `pvesh` commands.
 
@@ -499,6 +514,10 @@ Reference drives by **serial** (e.g. `S413NS0RC03383M`), NOT by
 `/dev/nvmeXnY` — NVMe device numbers shuffle across reboots. The boot disk
 in the typical homelab config is identifiable by containing `/boot/efi`
 and LVM volumes (`pve-root`, `pve-swap`, `pve-data`).
+
+The user runs steps 2-4 as root at the host's console or root shell. Stock
+PVE 9 has no `sudo`, so they drop the `sudo` prefix shown below unless they
+installed it.
 
 **Step 2: User partitions (one fdisk at a time).** Agent instructs:
 
@@ -668,8 +687,8 @@ cloud-init grows the root filesystem to the resized disk on first boot. The
 ### Creating a VM from an ISO
 
 ```bash
-# 1. Pick a VMID (Proxmox convention: 100+ for VMs, 200+ for LXC)
-VMID=100
+# 1. Pick a free VMID in your range (or ask Proxmox: pvesh get /cluster/nextid)
+VMID=<vmid>
 
 # 2. Create with sensible defaults
 sudo -n qm create $VMID \
@@ -680,15 +699,22 @@ sudo -n qm create $VMID \
     --scsihw virtio-scsi-single \
     --scsi0 local-lvm:32 \
     --ide2 local:iso/ubuntu-24.04-live-server-amd64.iso,media=cdrom \
-    --boot order=ide2 \
+    --boot "order=scsi0;ide2" \
     --ostype l26
 
 # 3. Start it
 sudo -n qm start $VMID
 
-# 4. Watch the console (or hand the URL to the user)
-sudo -n pvesh get /nodes/<node>/qemu/$VMID/status/current
+# 4. See the screen without a browser (root): save a screenshot, then view it
+echo "screendump /tmp/vm-$VMID.ppm" | qm monitor $VMID
 ```
+
+`order=scsi0;ide2` boots the disk first; an empty disk falls through to the
+installer, and the installed system boots on the next start. Eject the ISO
+afterwards with `qm set <vmid> --ide2 none,media=cdrom`. The `screendump`
+screenshot is how an agent checks what a console-only VM is showing (convert
+the PPM to PNG to view it). Measured: a Debian 13 netinst VM built this way
+showed its installer menu.
 
 Use `scripts/vm-from-iso.sh` for a one-shot wrapper.
 
@@ -699,12 +725,14 @@ cloud-init, Windows 11 with UEFI+TPM) live in
 ### Creating an LXC container
 
 ```bash
-# 1. Update template list and download
+# 1. Update the template list, find the current name, download it.
+#    The list includes arm64 builds; pick the one matching the host.
 sudo -n pveam update
-sudo -n pveam download local debian-12-standard_12.5-1_amd64.tar.zst
+sudo -n pveam available --section system | grep -E 'debian-13.*amd64'
+sudo -n pveam download local <template-name>
 
-# 2. Create the container
-sudo -n pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
+# 2. Create the container (key-based root login; no password on the command line)
+sudo -n pct create <ctid> local:vztmpl/<template-name> \
     --hostname debian-ct \
     --memory 1024 \
     --cores 2 \
@@ -712,7 +740,7 @@ sudo -n pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
     --rootfs vmdata:16 \
     --features nesting=1 \
     --unprivileged 1 \
-    --password <bcrypt-or-plaintext> \
+    --ssh-public-keys /root/agent.pub \
     --start 1
 ```
 
@@ -759,28 +787,58 @@ refuse and ask the user before invoking. This is intentional — see the
 ### Backups
 
 ```bash
-# One-shot backup of a single VM
-sudo -n vzdump <vmid> --storage local --mode snapshot --compress zstd
+# One-shot backup of a single VM (Mode A: POST /nodes/<node>/vzdump vmid=<vmid> ... returns a UPID)
+sudo -n vzdump <vmid> --storage <backup-storage> --mode snapshot --compress zstd
 
 # One-shot backup of all VMs on a node
-sudo -n vzdump --all 1 --storage local --mode snapshot --compress zstd
+sudo -n vzdump --all 1 --storage <backup-storage> --mode snapshot --compress zstd
 
-# Schedule via /etc/pve/jobs.cfg or the GUI; agent should usually defer
+# Schedule via the GUI or /cluster/backup; the agent should usually defer
 # scheduling to the user since it requires decisions about retention,
 # offsite targets, etc.
 ```
 
-Restore is `qmrestore <backup-file> <new-vmid>` (irreversible to the
-original VMID) or `pct restore`. The agent should always verify the backup
-file's integrity first:
+**Checking a backup, measured on PVE 9.2.2.** Three checks catch different
+failures; only the last one proves the data:
+
+| Check | Catches | Misses |
+|---|---|---|
+| `zstd -tq <file>.vma.zst` | bit rot in the stored file (vzdump writes an XXH64 checksum) | anything wrong before compression |
+| `zstd -dc <file>.vma.zst \| vma verify -` | truncation, damaged headers and structure | corrupted VM data: 4 of 4 archives with flipped data bytes passed |
+| restore to a scratch VMID and read known data | everything above, plus whether it boots | — |
+
+Run `vma verify` on a stream as above. Do not decompress to `/tmp`: on PVE 9
+`/tmp` is a RAM-backed tmpfs, so a large backup fills memory. In a pipeline,
+check every stage (`set -o pipefail`), not just the last.
+
+Restore test without disturbing the original (tested end to end):
 
 ```bash
-zstd -dc vzdump-qemu-<vmid>-<ts>.vma.zst > /tmp/check.vma && vma verify /tmp/check.vma -v && rm /tmp/check.vma
+# 1. Restore to a scratch VMID. unique=1 gives the copy a new MAC address.
+pve_api POST /nodes/<node>/qemu --data-urlencode vmid=<scratch> \
+  --data-urlencode archive=<storage>:backup/vzdump-qemu-<vmid>-<ts>.vma.zst \
+  --data-urlencode storage=<vm-storage> --data-urlencode unique=1
+# 2. Unplug its network before first boot, then start it.
+pve_api PUT /nodes/<node>/qemu/<scratch>/config --data-urlencode "net0=<existing net0 value>,link_down=1"
+pve_api POST /nodes/<node>/qemu/<scratch>/status/start
+# 3. Read a file you know the answer to through the guest agent (no network needed).
+pve_api GET "/nodes/<node>/qemu/<scratch>/agent/file-read?file=/etc/hostname" | jq -r .data.content
 ```
 
-This needs free space equal to the uncompressed size. A restore to a scratch
-VMID, for example `qmrestore <file> <unused-vmid> --storage local-lvm`, is the
-real test.
+**Why unplug it:** a restored copy keeps the original's `/etc/machine-id`.
+On Ubuntu 24.04 (systemd-networkd) the DHCP client ID is derived from it, so
+even with a new MAC the router handed the copy the original's IP while the
+original was still running (measured: two VMs on one address). This is
+systemd-networkd's default (a DUID-based client ID); the CLIENTID in the
+copy's lease file was that DUID. `unique=1` alone does not prevent this. If the copy must join the network, regenerate its identity first, then
+clear `link_down` and reboot:
+`rm /etc/machine-id /var/lib/dbus/machine-id && systemd-machine-id-setup`
+(run it from the console, or `qm guest exec <scratch> -- sh -c '...'`, while
+the link is down). Measured: after this and a reboot the copy got its own
+address.
+
+Restoring over the original VMID replaces it and is irreversible: confirm
+first, and prefer a scratch VMID.
 
 ### Changing host networking with a dead-man switch
 
@@ -829,14 +887,18 @@ sudo -n pvesh create /nodes/<node>/firewall/rules \
 # List current rules
 sudo -n pvesh get /nodes/<node>/firewall/rules
 
-# Enable firewall at the host level (default is disabled)
-sudo -n pvesh set /nodes/<node>/firewall --enable 1
+# Switches live under /options. The datacenter switch is the master: node and
+# VM rules are not enforced while it is off (the default).
+sudo -n pvesh set /cluster/firewall/options --enable 1
+# A VM's rules also need its firewall enabled and firewall=1 on each NIC:
+sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1
 ```
 
 **Default behavior on a fresh PVE install:** firewall is OFF by default at the
 datacenter level. Once enabled, the default input policy is DROP, with SSH (22)
-and the web UI (8006) allowed from the local network through the management
-IPSet. See
+and the web UI (8006) allowed from the auto-detected `local_network` alias
+(`pve-firewall localnet` shows it). Enabling it is a lockout risk: arm the
+dead-man revert above first. See
 `references/firewall-basics.md` for the full cluster/node/VM firewall
 hierarchy.
 
@@ -993,9 +1055,9 @@ UI header → SSH from another machine → different browser with hard-refresh
 ### 10. Mount an ISO on an existing VM but it doesn't show up at boot
 
 The ISO is attached as a CD-ROM device but the VM's boot order may have
-the disk first. Either change boot order with
-`qm set <vmid> --boot order=ide2,scsi0` (CD first, then disk) or hit
-Escape at boot to enter the BIOS menu and pick the CD manually.
+the disk first. Change the boot order with
+`qm set <vmid> --boot "order=ide2;scsi0"` (devices are separated by `;`, not
+`,`), or press Escape at boot and pick the CD from the menu.
 
 ### 11. The agent has to ship a multi-line script to the Proxmox host
 
@@ -1140,6 +1202,34 @@ With `serial0=socket`, output written while nothing is attached is lost, so
 a boot can look silent. Attach before starting the guest (`qm terminal
 <vmid>`; exit with Ctrl-O), and send long commands in short pieces.
 
+### 24. SSH suddenly answers `kex_exchange_identification: Connection reset by peer`
+
+OpenSSH 9.8+ (PVE 9's is 10.0) has `PerSourcePenalties` on by default:
+every failed login adds a temporary block on the client's IP (PVE 9.2 ships
+`authfail:5 ... max:600`, so up to 10 minutes). An agent whose SSH client
+offers several keys from an agent or `~/.ssh` hits "Too many authentication
+failures", and retrying makes the block longer. Measured: a handful of quick
+failures got the agent's IP dropped on every connection; the block had cleared
+by the next attempt, under a minute later. The target's journal shows
+`drop connection ... penalty: failed authentication`.
+
+Fix: always pass `-o IdentitiesOnly=yes -i <key>`, stop retrying on the first
+failure, and wait before the next attempt.
+
+### 25. LVM warns that thin volumes exceed the pool size
+
+`WARNING: Sum of all thin volume sizes (...) exceeds the size of thin pool` is
+normal with thin provisioning: disks only use what they write. The danger is
+the pool actually filling, which pauses or corrupts every guest on it. Watch
+the real usage, not the sum of disk sizes:
+
+```bash
+pve_api GET /nodes/<node>/storage/<lvmthin-storage>/status | jq '.data | {used, total}'
+lvs -o lv_name,data_percent,metadata_percent <vg>    # root SSH; the pool's data% and meta%
+```
+
+Stop and tell the user before a write would push the pool past about 80%.
+
 ## References
 
 - `references/storage-layouts.md` — directory vs LVM-thin vs ZFS, when to
@@ -1163,10 +1253,12 @@ a boot can look silent. Attach before starting the guest (`qm terminal
 - `scripts/pve-api.sh` — source it for `pve_api` (pinned TLS, token read from
   a file per call), `pve_wait` (task exit status, log on failure, timeout) and
   `pve_vm_ip` (guest-agent IP polling). Tested by `tests/pve-api.test.sh`.
-- `scripts/vm-from-iso.sh` — wrapper around `qm create` with sensible
-  defaults, prompts for VMID and storage target.
-- `scripts/lxc-from-template.sh` — wrapper around `pct create` with the
-  common Debian/Ubuntu/Alpine template paths.
+- `scripts/vm-from-iso.sh` — wrapper around `qm create`: checks the ISO
+  exists, uses the next free VMID unless `--vmid` is given, boots disk then
+  ISO. Works as root without sudo. Tested on PVE 9.2.2.
+- `scripts/lxc-from-template.sh` — wrapper around `pct create`: checks the
+  template exists, optional `--ssh-key`, unprivileged by default. Works as
+  root without sudo. Tested on PVE 9.2.2.
 - `scripts/iso-import.sh` — Ventoy USB → `<mount>/template/iso/` with a
   pre-flight size check (refuses to overflow the target fs) and per-file
   verification, then lists what Proxmox sees. Run on the Proxmox host as root.
@@ -1190,7 +1282,8 @@ a boot can look silent. Attach before starting the guest (`qm terminal
   file with the whitelist documented in *Recommended sudoers allowlist*
   above. Validate with `visudo -c -f <path>` before installing.
 - `templates/99-zen-agent-sshd.conf` — drop-in sshd Match block for the
-  agent user. Key-only auth, no forwarding, IP-restricted.
+  agent user. Key-only auth, no forwarding. The source-IP lock goes on the
+  key (`from="<ip>"` in `authorized_keys`), as its header explains.
 - `templates/install-sudoers.sh` — script to install and validate the
   sudoers file safely. Run as root on the Proxmox host.
 

@@ -46,7 +46,6 @@ zen-agent ALL=(ALL) NOPASSWD: /usr/bin/systemctl is-active *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ip *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ss *
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/ping *
-zen-agent ALL=(ALL) NOPASSWD: /usr/bin/resolvectl *
 
 # --- User/mount management (for storage workflow only) ---
 zen-agent ALL=(ALL) NOPASSWD: /usr/bin/mount *

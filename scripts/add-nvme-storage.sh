@@ -27,7 +27,7 @@ set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
     echo "This script must be run as root."
-    echo "Re-run with: sudo bash $0"
+    echo "Re-run as root (stock PVE has no sudo): bash $0"
     exit 1
 fi
 

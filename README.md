@@ -31,7 +31,17 @@ Pick one per host. The confirmation rules apply in every mode.
 Setup for Mode A and A-narrow is in `SKILL.md` (*Access modes*). Setup for
 Mode B is under *Prerequisites* below.
 
-## What's new in 1.2.0
+## What's new in 1.3.0
+
+- Backups: what each check really catches (`vma verify` misses corrupted
+  data), and a restore test that cannot clash with the original's IP.
+- Mode B rehearsed end to end: stock PVE 9 has no sudo, the IP lock belongs
+  on the key, and the setup steps now work in order.
+- Fixed `vm-from-iso.sh`, `lxc-from-template.sh` and the firewall commands,
+  all of which failed on a stock PVE 9 host.
+- New pitfalls: OpenSSH's failed-login penalties, thin-pool overcommit.
+
+## What was new in 1.2.0
 
 - Tested API helpers in `scripts/pve-api.sh`: task waits that fail loudly and
   time out, and guest-agent IP polling.
@@ -136,11 +146,12 @@ For Mode A or A-narrow, follow *Access modes* in `SKILL.md`. For Mode B, set
 up scoped SSH access from the agent's host to your Proxmox host. That setup
 is one-time per host:
 
-1. **Create a dedicated agent user on the Proxmox host:**
+Rehearsed end to end on Debian 13, the base of PVE 9.
+
+1. **Install sudo on the Proxmox host** (stock PVE 9 does not ship it):
    ```bash
    # As root on the Proxmox host
-   useradd -m -s /bin/bash zen-agent
-   passwd -l zen-agent
+   apt install sudo
    ```
 
 2. **Generate a keypair on the AGENT's host:**
@@ -150,32 +161,40 @@ is one-time per host:
        -C "zen-agent@$(hostname) ($(date +%Y-%m-%d))" -N ""
    ```
 
-3. **Push the public key:**
+3. **Create the user and install the sudoers file** (on the Proxmox host as
+   root; the script creates `zen-agent` with a locked password):
    ```bash
-   ssh-copy-id -i ~/.ssh/zen-agent-proxmox.pub zen-agent@<proxmox-host>
-   # Verify
-   ssh -i ~/.ssh/zen-agent-proxmox zen-agent@<proxmox-host> 'whoami'
-   ```
-
-4. **Install the sudoers file** (run on the Proxmox host as root):
-   ```bash
-   scp templates/zen-agent-sudoers root@<proxmox-host>:/tmp/
-   scp templates/install-sudoers.sh root@<proxmox-host>:/tmp/
+   scp templates/zen-agent-sudoers templates/install-sudoers.sh root@<proxmox-host>:/tmp/
    ssh root@<proxmox-host> 'bash /tmp/install-sudoers.sh'
    ```
 
-5. **Install the sshd Match block** (run on the Proxmox host as root):
+4. **Install the public key, locked to the agent's source IP.** The account
+   has no password, so `ssh-copy-id` cannot work; root writes the key. Use the
+   agent's address as the Proxmox host sees it (`echo $SSH_CLIENT` in any SSH
+   session from the agent host shows it).
+   ```bash
+   # As root on the Proxmox host; paste the contents of zen-agent-proxmox.pub
+   install -d -m 700 -o zen-agent -g zen-agent /home/zen-agent/.ssh
+   printf 'from="<agent-ip>",restrict,pty %s\n' '<public key line>' > /home/zen-agent/.ssh/authorized_keys
+   chown zen-agent: /home/zen-agent/.ssh/authorized_keys
+   chmod 600 /home/zen-agent/.ssh/authorized_keys
+   ```
+   `restrict` turns off forwarding for this key and `pty` keeps a terminal.
+
+5. **Install the sshd Match block** (key-only auth, no forwarding):
    ```bash
    scp templates/99-zen-agent-sshd.conf root@<proxmox-host>:/etc/ssh/sshd_config.d/
-   ssh root@<proxmox-host> 'sshd -t && systemctl reload sshd'
+   ssh root@<proxmox-host> 'sshd -t && systemctl reload ssh'
    ```
 
 6. **Final verification:**
    ```bash
    # From the agent's host
-   ssh -i ~/.ssh/zen-agent-proxmox zen-agent@<proxmox-host> 'sudo -n qm list'
+   ssh -o IdentitiesOnly=yes -i ~/.ssh/zen-agent-proxmox zen-agent@<proxmox-host> 'sudo -n qm list'
    ```
-   Should print the VM list with no password prompt.
+   Should print the VM list with no password prompt. If SSH starts
+   resetting connections after a failed attempt, wait a minute: OpenSSH
+   temporarily blocks IPs that fail to authenticate (SKILL.md pitfall #24).
 
 After that, the agent has all the access it needs. The agent's own
 safety policy will refuse destructive commands without explicit

@@ -26,6 +26,13 @@ if [[ ! -f "$SUDOERS_SRC" ]]; then
     exit 1
 fi
 
+# Stock Proxmox VE 9 does not ship sudo at all.
+if ! command -v visudo >/dev/null; then
+    echo "ERROR: sudo is not installed on this host (stock PVE 9 has none)."
+    echo "Install it first: apt install sudo"
+    exit 1
+fi
+
 echo "Validating sudoers syntax..."
 if ! visudo -c -f "$SUDOERS_SRC"; then
     echo "ERROR: sudoers file has syntax errors. NOT installing."
@@ -76,15 +83,18 @@ echo
 echo "============================================"
 echo " Done. Next steps:"
 echo "============================================"
-echo "1. Push the agent's SSH public key:"
-echo "   ssh-copy-id -i ~/.ssh/<agent>-<host>.pub $AGENT_USER@<host>"
+echo "1. Install the agent's SSH public key, locked to the agent's source IP:"
+echo "   install -d -m 700 -o $AGENT_USER -g $AGENT_USER /home/$AGENT_USER/.ssh"
+echo "   printf 'from=\"<agent-ip>\",restrict,pty %s\\n' '<contents of <agent>-<host>.pub>' > /home/$AGENT_USER/.ssh/authorized_keys"
+echo "   chown $AGENT_USER: /home/$AGENT_USER/.ssh/authorized_keys; chmod 600 /home/$AGENT_USER/.ssh/authorized_keys"
 echo
 echo "2. Test SSH + sudo from the agent host:"
 echo "   ssh $AGENT_USER@<host> 'sudo -n qm list'"
 echo
 echo "3. Install the sshd Match block:"
-echo "   cp templates/99-zen-agent-sshd.conf /etc/ssh/sshd_config.d/"
-echo "   sshd -t && systemctl reload sshd"
+echo "   cp 99-zen-agent-sshd.conf /etc/ssh/sshd_config.d/"
+echo "   sshd -t && systemctl reload ssh"
 echo
-echo "4. Verify the audit log is working:"
-echo "   tail -f /var/log/auth.log | grep -i 'sudo:'"
+echo "4. Verify the audit trail (PVE 9 has no /var/log/auth.log; it logs to the journal):"
+echo "   journalctl _COMM=sudo -n 20      # every sudo command"
+echo "   sudoreplay -l                    # full input/output sessions, from log_input/log_output"

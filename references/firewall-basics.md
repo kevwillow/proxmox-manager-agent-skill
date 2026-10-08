@@ -70,23 +70,35 @@ Rule fields:
 
 ## Enabling the firewall
 
-Default PVE install: firewall is **OFF** at the datacenter level. Once it is
-enabled, the default input policy is DROP, with SSH (22) and the web UI (8006)
-allowed from the local network through the management IPSet. Node and VM
-firewall settings remain disabled until you flip them.
+Default PVE install: firewall is **OFF** at the datacenter level
+(`pve-firewall status` prints `disabled/running`), and nothing at node or VM
+level is enforced until it is on. Once enabled, the default input policy is
+DROP, and the firewall automatically allows cluster traffic, SSH and the web
+UI from the `local_network` alias. That alias is auto-detected (usually the
+host's subnet); check it with `pve-firewall localnet` before enabling.
+
+Every switch lives under an `/options` path. `pvesh set .../firewall --enable 1`
+(without `/options`) fails with `No 'set' handler`.
 
 ```bash
-# Enable at node level
-sudo -n pvesh set /nodes/<node>/firewall --enable 1
+# Datacenter: the master switch. Nothing below is enforced while this is off.
+sudo -n pvesh set /cluster/firewall/options --enable 1
 
-# Enable at VM level
-sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall --enable 1
+# Node level (on by default once the datacenter switch is on)
+sudo -n pvesh set /nodes/<node>/firewall/options --enable 1
+
+# VM level: enable the VM's firewall AND mark each NIC with firewall=1,
+# or the VM's rules never apply to that NIC.
+sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1
+sudo -n qm set <vmid> --net0 virtio=<MAC>,bridge=vmbr0,firewall=1   # keep the existing MAC
 ```
 
-**WARNING: enabling the firewall at the node level with no rules other
-than the defaults will block all inbound except SSH (22) and web UI
-(8006).** If you're connecting from outside the LAN (tailscale, etc.),
-add a rule for your source subnet BEFORE enabling.
+**WARNING: enabling the datacenter firewall with only the defaults blocks all
+inbound except SSH (22) and the web UI (8006) from `local_network`.** If you
+connect from anywhere else (Tailscale, VPN, another subnet), add a rule for
+that source BEFORE enabling, and arm a revert first (see SKILL.md, *Changing
+host networking with a dead-man switch*; the same timer can run
+`pvesh set /cluster/firewall/options --enable 0`).
 
 ## Security groups
 
@@ -140,28 +152,28 @@ sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
     --action ACCEPT --type in --source 100.64.0.0/10 --dport 22 --proto tcp
 
-# Enable firewall for this VM
-sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall --enable 1
+# Enable firewall for this VM, and on its NIC (keep the MAC from `qm config`)
+sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall/options --enable 1
+sudo -n qm set $VMID --net0 virtio=<MAC>,bridge=vmbr0,firewall=1
 ```
 
 ## Pitfalls
 
 ### "I enabled the firewall and lost access"
 
-The default behavior is to block all inbound except SSH and the web UI.
-If your access is from a source other than the LAN (tailscale, public IP,
-VPN, etc.) and you didn't add a rule for it, you're locked out.
+The default behavior is to block all inbound except SSH and the web UI from
+`local_network`. If your access comes from another source (Tailscale, public
+IP, VPN, etc.) and you didn't add a rule for it, you're locked out.
 
-Recovery: the Proxmox web shell (top-right of the web UI, SSH dropdown
-in the header) works even when the firewall blocks SSH — it's a
-separate console. Use it to disable the firewall or add a rule.
+Recovery: from a machine inside `local_network`, the web UI and its Shell
+still work. If nothing can reach the host, use its physical console.
 
 ```bash
-# Disable firewall at the cluster level (in web shell)
-pvesh set /cluster/firewall --enable 0
+# Disable the firewall at the datacenter level
+pvesh set /cluster/firewall/options --enable 0
 
 # Or at the node level
-pvesh set /nodes/<node>/firewall --enable 0
+pvesh set /nodes/<node>/firewall/options --enable 0
 ```
 
 ### "Rules don't take effect immediately"

@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0 (2026-10-07)
+
+Every item below was run on a PVE 9.2.2 host or, for Mode B, on Debian 13.
+
+Added:
+- Backup checking table: `zstd -t` catches bit rot in the stored file;
+  `zstd -dc | vma verify -` catches truncation and header damage but passed
+  4 of 4 archives with corrupted data; only a restore proves the data.
+- Restore test with `unique=1` plus `link_down=1`, read through the guest
+  agent. A restored copy shares `/etc/machine-id`, so its DHCP client ID
+  matches the original's and it took the original's IP even with a new MAC.
+- Mode B rehearsal notes: no sudo on stock PVE 9, IP lock via `from=` on the
+  key, root-equivalence shown (`find -exec` runs as uid 0), audit via
+  `journalctl _COMM=sudo` and `sudoreplay`.
+- `qm monitor` `screendump` to see a console-only VM's screen.
+- `lxc-from-template.sh --ssh-key`.
+- Pitfall 24 (OpenSSH `PerSourcePenalties` blocks an agent after failed
+  logins) and 25 (thin-pool overcommit).
+
+Fixed:
+- `vm-from-iso.sh` and `lxc-from-template.sh` reported existing ISOs and
+  templates as missing (unsupported `--content` option, bare filename, and
+  `sudo`, which stock PVE lacks). The LXC script also forced CTID 200 even
+  when taken, and the VM script booted the installer again after install.
+- Firewall: every enable/disable command lacked `/options` and failed; a VM's
+  rules also need `firewall=1` on its NIC and the datacenter switch on; SSH
+  and 8006 are allowed through the `local_network` alias, not an IPSet.
+- `install-sudoers.sh` blamed "syntax errors" when sudo was not installed.
+- The sshd template claimed an IP restriction it did not have, and its
+  "optional" `Match Address` block restricts nothing (tested).
+- README Mode B setup: `ssh-copy-id` cannot work for a locked account; root
+  now installs the key with `from=`. Removed `resolvectl` (not on PVE) from
+  the allowlist, and `/var/log/auth.log` (not on PVE 9) from the audit notes.
+- `vma verify` recipe no longer decompresses into `/tmp`, a tmpfs on PVE 9.
+- Boot order uses `;` between devices (pitfall 10 used `,`).
+
 ## 1.2.0 (2026-10-07)
 
 Added:

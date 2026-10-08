@@ -11,12 +11,19 @@
 #   lxc-from-template.sh --hostname nodered --template ubuntu-24.04-standard_24.04-2_amd64.tar.zst --storage vmdata --disk 16
 #
 # Notes:
-#   - Must be run as root (uses sudo internally; or run directly as root).
+#   - Run on the Proxmox host as root, or as a user with the sudoers allowlist.
 #   - The template must already be downloaded with `pveam download <storage> <tpl>`.
-#   - CTID defaults to the next free ID >= 200. Override with --ctid.
+#     `pveam available` also lists arm64 builds; pick the one matching the host.
+#   - CTID defaults to Proxmox's next free ID. Override with --ctid.
 #   - Disk defaults to local-lvm (thin provisioning). Override with --storage.
+#   - --ssh-key <file> installs a public key for root; prefer it to --password,
+#     which is visible in the process list while pct runs.
 
 set -euo pipefail
+
+# Stock PVE has no sudo; use it only when not already root.
+SUDO=""
+[[ $EUID -ne 0 ]] && SUDO="sudo -n"
 
 HOSTNAME=""
 TEMPLATE=""
@@ -33,6 +40,7 @@ ONBOOT=1
 UNPRIVILEGED=1
 FEATURES=""
 PASSWORD=""
+SSH_KEY=""
 
 usage() {
     sed -n '2,21p' "$0"
@@ -53,6 +61,7 @@ while [[ $# -gt 0 ]]; do
         --ip)          IP="$2"; shift 2 ;;
         --gateway)     GATEWAY="$2"; shift 2 ;;
         --password)    PASSWORD="$2"; shift 2 ;;
+        --ssh-key)     SSH_KEY="$2"; shift 2 ;;
         --privileged)  UNPRIVILEGED=0; shift 1 ;;
         --no-onboot)   ONBOOT=0; shift 1 ;;
         --features)    FEATURES="$2"; shift 2 ;;
@@ -66,17 +75,15 @@ done
 
 # Pick next free CTID if not specified
 if [[ -z "$CTID" ]]; then
-    CTID=$(sudo -n pvesh get /cluster/nextid 2>/dev/null || echo 200)
-    if [[ "$CTID" -lt 200 ]]; then CTID=200; fi
+    CTID=$($SUDO pvesh get /cluster/nextid)
 fi
 
 # Verify the template exists
-if ! sudo -n pvesh get "/nodes/localhost/storage/${TPL_STORAGE}/content/${TEMPLATE}" --content vztmpl \
-        >/dev/null 2>&1; then
+TEMPLATES=$($SUDO pvesm list "$TPL_STORAGE" --content vztmpl | awk 'NR>1 {print $1}')
+if ! grep -qxF "${TPL_STORAGE}:vztmpl/${TEMPLATE}" <<<"$TEMPLATES"; then
     echo "ERROR: Template '${TEMPLATE}' not found on storage '${TPL_STORAGE}'." >&2
     echo "Available templates:" >&2
-    sudo -n pvesh get "/nodes/localhost/storage/${TPL_STORAGE}/content" --content vztmpl 2>&1 | \
-        grep -oE '[a-zA-Z0-9._+-]+\.(tar\.zst|tar\.xz|tar\.gz)' | sort -u >&2
+    sed "s|^${TPL_STORAGE}:vztmpl/|  |" <<<"$TEMPLATES" >&2
     exit 1
 fi
 
@@ -100,9 +107,12 @@ PASS_ARGS=()
 if [[ -n "$PASSWORD" ]]; then
     PASS_ARGS=(--password "$PASSWORD")
 fi
+if [[ -n "$SSH_KEY" ]]; then
+    PASS_ARGS+=(--ssh-public-keys "$SSH_KEY")
+fi
 
 echo "Creating CT ${CTID} (${HOSTNAME}) from ${TEMPLATE}..."
-sudo -n pct create "$CTID" "${TPL_STORAGE}:vztmpl/${TEMPLATE}" \
+$SUDO pct create "$CTID" "${TPL_STORAGE}:vztmpl/${TEMPLATE}" \
     --hostname "$HOSTNAME" \
     --memory "$MEMORY" \
     --cores "$CORES" \

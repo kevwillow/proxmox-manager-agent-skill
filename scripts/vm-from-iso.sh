@@ -10,13 +10,17 @@
 #   vm-from-iso.sh --name pihole --iso debian-12-generic-amd64.iso --memory 1024 --cores 1 --disk 8
 #
 # Notes:
-#   - Must be run as root (uses sudo internally; or run directly as root).
-#   - The ISO must already be uploaded to /var/lib/vz/template/iso/ on the
-#     'local' storage, OR pass --storage to specify another storage ID.
-#   - VMID defaults to the next free ID >= 100. Override with --vmid.
+#   - Run on the Proxmox host as root, or as a user with the sudoers allowlist.
+#   - The ISO must already be on an ISO storage: 'local' by default
+#     (/var/lib/vz/template/iso/), or pass --iso-storage <storage-id>.
+#   - VMID defaults to Proxmox's next free ID. Override with --vmid.
 #   - Disk defaults to local-lvm (thin provisioning). Override with --storage.
 
 set -euo pipefail
+
+# Stock PVE has no sudo; use it only when not already root.
+SUDO=""
+[[ $EUID -ne 0 ]] && SUDO="sudo -n"
 
 NAME=""
 ISO=""
@@ -56,22 +60,20 @@ done
 
 # Pick next free VMID if not specified
 if [[ -z "$VMID" ]]; then
-    VMID=$(sudo -n pvesh get /cluster/nextid 2>/dev/null || echo 100)
-    if [[ "$VMID" -lt 100 ]]; then VMID=100; fi
+    VMID=$($SUDO pvesh get /cluster/nextid)
 fi
 
 # Verify the ISO exists on the named storage
-if ! sudo -n pvesh get "/nodes/localhost/storage/${ISO_STORAGE}/content/${ISO}" --content iso \
-        >/dev/null 2>&1; then
+ISOS=$($SUDO pvesm list "$ISO_STORAGE" --content iso | awk 'NR>1 {print $1}')
+if ! grep -qxF "${ISO_STORAGE}:iso/${ISO}" <<<"$ISOS"; then
     echo "ERROR: ISO '${ISO}' not found on storage '${ISO_STORAGE}'." >&2
     echo "Available ISOs:" >&2
-    sudo -n pvesh get "/nodes/localhost/storage/${ISO_STORAGE}/content" --content iso 2>&1 | \
-        grep -oE '[a-zA-Z0-9._-]+\.iso' | sort -u >&2
+    sed "s|^${ISO_STORAGE}:iso/|  |" <<<"$ISOS" >&2
     exit 1
 fi
 
 echo "Creating VM ${VMID} (${NAME}) from ${ISO}..."
-sudo -n qm create "$VMID" \
+$SUDO qm create "$VMID" \
     --name "$NAME" \
     --memory "$MEMORY" \
     --cores "$CORES" \
@@ -79,13 +81,13 @@ sudo -n qm create "$VMID" \
     --scsihw virtio-scsi-single \
     --scsi0 "${STORAGE}:${DISK}" \
     --ide2 "${ISO_STORAGE}:iso/${ISO},media=cdrom" \
-    --boot "order=ide2" \
+    --boot "order=scsi0;ide2" \
     --ostype "$OSTYPE"
 
 echo
 echo "VM ${VMID} created. Start with:"
-echo "  sudo -n qm start ${VMID}"
+echo "  qm start ${VMID}"
 echo
-echo "Or open the noVNC console at:"
-sudo -n pvesh get "/nodes/localhost/qemu/${VMID}/vncproxy" 2>/dev/null | \
-    grep -oE '[^"]*:[0-9]+' | head -1 || echo "  https://<proxmox-host>:8006 (login, then VM ${VMID} → Console)"
+echo "Then open its console: https://<proxmox-host>:8006, VM ${VMID}, Console."
+echo "Boot order is disk first, then the ISO: an empty disk falls through to the installer."
+echo "After the install, eject the ISO: qm set ${VMID} --ide2 none,media=cdrom"
