@@ -33,8 +33,10 @@ echo "=== Storage pools ==="
 pvesm status 2>/dev/null
 
 echo
-echo "=== HA groups and services ==="
+echo "=== HA services and rules ==="
 ha-manager status 2>/dev/null || echo "(HA not configured)"
+# PVE 9 replaced HA groups with rules; this fails harmlessly on PVE 8.
+ha-manager rules list 2>/dev/null || true
 
 echo
 echo "=== Recent pve-cluster log errors ==="

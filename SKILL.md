@@ -1,26 +1,47 @@
 ---
 name: proxmox-manager-agent
-description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through an admin PVE API token plus root SSH, or a scoped SSH user. Covers VM and LXC lifecycle, ISO and storage management, backup/restore, network bridges, firewall, cluster operations, and PVE 9.x gotchas. Includes an admin bootstrap recipe and sudoers allowlist/blacklist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.1.0
+description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through the PVE API (admin or pool-scoped token) plus root SSH, or a scoped SSH user. Covers VM and LXC lifecycle, cloud-init templates and fast clones, ISO and storage management, backup/restore, network bridges with a dead-man revert timer, firewall, cluster operations, and PVE 9.x gotchas. Includes tested API helpers, a least-privilege token recipe, and a sudoers allowlist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'make a template', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
+version: 1.2.0
 author: kevwillow
 license: MIT
 platforms: [linux]
 metadata:
   hermes:
     tags: [proxmox, pve, virtualization, kvm, lxc, homelab, infrastructure, devops]
-    related_skills: [scoped-agent-ssh-access]
 ---
 
 # Proxmox Manager Agent
 
 Operational skill for managing a Proxmox VE host (single-node or small cluster)
 from any AI agent — Hermes, Claude Code, Codex, OpenCode, or any headless
-runner. It supports the admin API-token plus root SSH model and the scoped SSH
-model. The scoped security model (dedicated agent user, sudoers allowlist,
-key-only auth, IP allowlist, audit trail, one-command revoke) lives in the
-`scoped-agent-ssh-access` skill. **This skill assumes that is already set up**
-for Mode B. This skill is the *operational* side: which commands to run, in
+runner. It supports three access modes: an admin API token plus root SSH, a
+pool-scoped API token, and a scoped SSH user with a sudoers allowlist. The
+one-time setup for the scoped SSH user is in the README (*Prerequisites*) and
+`templates/`. This skill is the *operational* side: which commands to run, in
 what order, with what pitfall-avoidance.
+
+## Operating rules (every mode)
+
+1. **Survey before any write.** Read `GET /version`, `GET /nodes` (node names
+   are case-sensitive), `GET /cluster/resources`, storage and pools first.
+   Note every guest's tags and `protection` flag.
+2. **Own a range, touch nothing else.** Put guests you create in an agreed VMID
+   range (for example 8000-8999) with a name prefix and a tag (for example
+   `agent`). Never stop, change, roll back or destroy a guest outside that
+   range without the user's yes. Guests with `protection=1` or a `keep` tag are
+   the user's: leave them alone. When the user wants a guest locked, set
+   `protection=1`; destroy then fails until it is cleared.
+3. **Read the API schema from the host, not from memory.** Parameters and
+   privileges change between releases. `pvesh usage <path> -v` (root SSH)
+   prints the live parameters, and the API viewer is at
+   `https://<host>:8006/pve-docs/api-viewer/`.
+4. **Wait for every task.** Most writes return a task ID (UPID). Check its exit
+   status before the next step. A write you did not wait for is not done.
+5. **Keep secrets in files.** Read the token and passwords from mode-600 files
+   and never print them. UPIDs and logs contain the token ID (`user@realm!id`),
+   which is not secret; the token value is.
+6. **Confirm before anything irreversible**, in every mode. Admin rights change
+   what the agent CAN do, not what it does without asking. See *Soft blacklist*.
 
 ## When to Use
 
@@ -30,10 +51,9 @@ what order, with what pitfall-avoidance.
 - A task touches any of: `qm`, `pct`, `pvesh`, `pvesm`, `vzdump`, `pve-firewall`,
   `ha-manager`, `pvecm`, `qemu-img`, on a PVE 8.x or 9.x host.
 
-**Don't use for:** generic Linux sysadmin (use scoped-agent-ssh-access
-directly), non-Proxmox virtualization (KVM/libvirt without PVE wrapper, Xen,
-ESXi), or anything where the user has not yet established scoped SSH access —
-that's a prerequisite, not a part of this skill.
+**Don't use for:** generic Linux sysadmin, non-Proxmox virtualization
+(KVM/libvirt without the PVE wrapper, Xen, ESXi), or a host where the user has
+not yet chosen and set up an access mode below.
 
 ## Access modes
 
@@ -88,40 +108,69 @@ Bootstrap this mode as follows:
 
 5. Delete the password file.
 
-Use the token through a pinned HTTPS helper. Node names are case-sensitive and
-must be read from `GET /nodes`; the measured host's node was `Apollo`.
+Use the token through the helpers in `scripts/pve-api.sh`: pinned TLS, token
+read from its file on each call, and a task wait that fails loudly. Node names
+are case-sensitive (`pve` and `PVE` are different nodes); read them from
+`GET /nodes`.
 
 ```bash
-pve_api() {
-  local method=$1 path=$2
-  shift 2
-  curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/<host>.pin)" \
-    -H "Authorization: $(cat ~/.config/pve/<host>.token)" \
-    -X "$method" "https://<host>:8006/api2/json$path" "$@"
-}
-
-# Most writes return a task id (UPID). Wait for it before the next step:
-pve_wait() {
-  local u; u=$(jq -rn --arg u "$1" '$u|@uri')
-  until pve_api GET "/nodes/<node>/tasks/$u/status" | jq -e '.data.status=="stopped"' >/dev/null; do sleep 3; done
-  pve_api GET "/nodes/<node>/tasks/$u/status" | jq -r '.data.exitstatus'   # "OK" on success
-}
+export PVE_HOST=<host> PVE_TOKEN_FILE=~/.config/pve/<host>.token PVE_PIN_FILE=~/.config/pve/<host>.pin
+source scripts/pve-api.sh
 
 pve_api GET '/cluster/resources?type=vm'
-pve_api GET '/nodes/Apollo/status'
-pve_api POST '/nodes/Apollo/qemu' --data-urlencode 'vmid=<vmid>' --data-urlencode 'name=<name>'
-pve_api POST '/nodes/Apollo/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>'
-pve_api POST '/nodes/Apollo/qemu/<vmid>/status/start'
+pve_api GET '/nodes/<node>/status'
+upid=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>' | jq -r .data)
+pve_wait "$upid" 300      # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
+pve_vm_ip <node> <new-vmid> 180   # first IPv4 from the guest agent, polling until it answers
 ```
+
+A write that fails its permission check returns HTTP 403 with no UPID, and
+the body names the missing privilege and path, for example
+`Permission check failed (/sdn/zones/localnetwork/vmbr0, SDN.Use)`. `pve_wait`
+returns 1 at once when it gets no UPID; read the response for the reason.
+
+### Mode A-narrow: pool-scoped API token (real containment)
+
+Mode A and Mode B are both root-equivalent. When the agent only needs to run
+its own guests, give it a token that can touch nothing else: a resource pool
+for its guests plus four built-in roles. Run as an admin:
+
+```text
+POST /pools                 poolid=agent
+POST /access/users          userid=agent@pve
+POST /access/users/agent@pve/token/t1    privsep=0     # save .data.value as in Mode A step 3
+PUT  /access/acl  path=/pool/agent                       users=agent@pve roles=PVEVMAdmin
+PUT  /access/acl  path=/storage/<vm-storage>             users=agent@pve roles=PVEDatastoreUser
+PUT  /access/acl  path=/sdn/zones/localnetwork/<bridge>  users=agent@pve roles=PVESDNUser
+PUT  /access/acl  path=/vms/<template-vmid>              users=agent@pve roles=PVETemplateUser
+```
+
+Then clone with `pool=agent` so each new guest lands inside the token's reach.
+Measured on PVE 9.2.2:
+
+- The token sees only what it is granted: `GET /cluster/resources` listed the
+  template alone, and reading a guest outside the pool returned
+  `403 Permission check failed (/vms/<vmid>, VM.Audit)`.
+- Without the `/sdn/zones/localnetwork/<bridge>` grant, a clone fails with
+  `403 ... SDN.Use` even when no SDN is configured. Plain Linux bridges sit in
+  the built-in `localnetwork` zone.
+- `PVEVMAdmin` on PVE 9 includes `VM.GuestAgent.Unrestricted`, which lets the
+  token run commands as root inside its guests through the guest agent. If
+  that is too much, copy the role without it.
+- `VM.Monitor` no longer exists on PVE 9. Custom roles that list it must drop it.
+
+Not measured here: the full clone-and-start run with all four grants in
+place. Run that once on your host before relying on this mode.
+The token cannot set root-only options (`args`, `hookscript`, host devices)
+and cannot change the host; keep root SSH for that, or have the user do it.
 
 ### Mode B: Scoped SSH user
 
-This is the existing `zen-agent` model: a dedicated non-root SSH user with a
+A dedicated non-root SSH user (the templates call it `zen-agent`) with a
 sudoers allowlist, key-only authentication, source-IP restriction, and audit
 trail. It is described in the architecture and command sections below.
 
-The confirmation policy, including the soft blacklist, applies in BOTH modes.
-Admin rights change what the agent CAN do, not what it does without asking.
+The confirmation policy, including the soft blacklist, applies in EVERY mode.
 
 ## Architecture
 
@@ -171,8 +220,8 @@ speed bump rather than containment. See *Access modes* for Mode A.
 
 `pvesh`, `pveam`, `vzdump`, `qemu-img` and `pvecm` are in `/usr/bin` on PVE
 9.x; most tutorials list `/usr/sbin`. A sudoers rule with the wrong path
-silently falls through to "ask for a password"; see
-`scoped-agent-ssh-access` for the diagnose-and-fix recipe.
+silently falls through to "ask for a password"; see pitfall #15 for the
+diagnose-and-fix recipe.
 
 Always verify on a fresh host before writing sudoers:
 ```bash
@@ -192,7 +241,7 @@ sudo -n pvesh get /nodes
 # ┌────────┬────────┬───────┬─...
 # │ node   │ status │   cpu │...
 # ╞════════╪════════╪═══════╪═...
-# │ apollo │ online │ 0.17% │
+# │ pve    │ online │ 0.17% │
 # └────────┴────────┴───────┴─...
 ```
 
@@ -325,8 +374,7 @@ The agent's exact wording when refusing:
 > the VM and its disks irrecoverably. Reply `yes destroy 100` if you want me
 > to proceed."
 
-This matches the trust model in `scoped-agent-ssh-access`: sudoers says
-yes, the agent layer says "ask first."
+Sudoers (or the token) says yes; the agent layer says "ask first."
 
 ### How the agent should *think* about the whitelist
 
@@ -411,6 +459,34 @@ the full pipeline is: wipe → partition → format → mount → register with
 pvesm. The agent drives this end-to-end with the user running the
 destructive steps (the agent's safety policy blocks `mkfs`, `parted`, `dd`
 by design — see *Explicit blacklist* above).
+
+**API shortcut (Mode A).** List drives with their serials without a shell:
+
+```bash
+pve_api GET /nodes/<node>/disks/list | jq -c '.data[] | {devpath, model, serial, size, used, wearout}'
+```
+
+`wearout` is the percentage of life **remaining** (100 = new), not used.
+`used` says what Proxmox found on the drive (`BIOS boot`, `LVM`, `ext4`,
+`partitions`). Before proposing to stage a drive, look
+read-only at what it holds (`wipefs -n /dev/<dev>`, `smartctl -H /dev/<dev>`,
+or a read-only mount and `ls`). If it holds anything that looks like real data
+(home directories, VM disks, databases, documents), stop and ask.
+
+With the user's yes, one API call wipes a drive and creates registered storage:
+
+```text
+POST /nodes/<node>/disks/lvmthin    device=/dev/<dev> name=<storage-id> add_storage=1    # VM disks
+POST /nodes/<node>/disks/directory  device=/dev/<dev> name=<storage-id> filesystem=ext4 add_storage=1
+```
+
+Both destroy everything on the drive, exactly like `mkfs`, so they carry the
+same confirmation as the manual path: name the drive by **serial**, show its
+`used` value, and wait for an explicit yes. Re-read `/disks/list` right before
+the call, because `/dev/nvmeXnY` numbers can change across reboots. The
+directory variant mounts the drive with a systemd mount unit under
+`/mnt/pve/<storage-id>`; add the content types you need afterwards with
+`PUT /storage/<storage-id> content=iso,import,backup,snippets`.
 
 **Step 1: Identify drives and confirm scope.**
 
@@ -497,11 +573,16 @@ explicit prompts at every destructive step.
 
 ### Creating dev VMs fast: cloud-init template + clone
 
-Use a cloud-init template when you want a development VM without a console:
-the SSH key is injected at first boot and clones take seconds.
+Use a cloud-init template when you want a VM without a console: the user,
+SSH key and network are injected at first boot and a clone takes seconds.
 
-Verified end to end on PVE 9.2.2 with the Ubuntu 26.04 cloud image (2026-10-03),
-using the Mode A helpers above. Each write returns a UPID; `pve_wait` it.
+Verified end to end on PVE 9.2.2 on 2026-10-03 with 16 cloud images: Ubuntu
+22.04/24.04/26.04, Debian 11/12/13, Rocky and Alma 8/9/10, Fedora 44,
+openSUSE Leap 15.6 and Tumbleweed, Amazon Linux 2023. Every one went from
+clone to an IP from the guest agent in 21-43 seconds, with SSH and sudo
+working. The recipe below, exactly as written, was re-run for Ubuntu 24.04
+on 2026-10-07: template built, linked clone, IP and SSH in 46 seconds. Each
+write returns a UPID; `pve_wait` it.
 
 ```bash
 # 1. Fetch the image onto the host, checksum-verified. Saved with a .qcow2 name.
@@ -510,12 +591,13 @@ pve_api POST /nodes/<node>/storage/local/download-url \
   --data-urlencode url=https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img \
   --data-urlencode checksum=<sha256 from SHA256SUMS> --data-urlencode checksum-algorithm=sha256
 
-# 2. Cloud images ship without qemu-guest-agent. A vendor snippet installs it,
-#    which is what makes /agent/network-get-interfaces report the VM's IP.
+# 2. A vendor snippet that makes sure qemu-guest-agent is installed and running.
+#    The agent is what reports the VM's IP to /agent/network-get-interfaces.
 pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets
 ssh root@<host> 'mkdir -p /var/lib/vz/snippets; printf "#cloud-config\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n" > /var/lib/vz/snippets/vendor-guest-agent.yaml'
 
 # 3. Template VM. sshkeys must be URL-encoded BEFORE --data-urlencode encodes it again.
+#    ciupgrade=0: see the note below.
 KEYS=$(cat ~/.ssh/id_ed25519.pub | jq -sRr @uri)
 pve_api POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name=ubuntu-2604-tmpl \
   --data-urlencode memory=2048 --data-urlencode cores=2 --data-urlencode cpu=host --data-urlencode ostype=l26 \
@@ -524,23 +606,64 @@ pve_api POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name
   --data-urlencode ide2=local-lvm:cloudinit --data-urlencode boot=order=scsi0 \
   --data-urlencode serial0=socket --data-urlencode vga=serial0 --data-urlencode agent=enabled=1 \
   --data-urlencode net0=virtio,bridge=vmbr0 --data-urlencode ciuser=<user> --data-urlencode "sshkeys=$KEYS" \
-  --data-urlencode ipconfig0=ip=dhcp --data-urlencode cicustom=vendor=local:snippets/vendor-guest-agent.yaml
+  --data-urlencode ipconfig0=ip=dhcp --data-urlencode ciupgrade=0 \
+  --data-urlencode cicustom=vendor=local:snippets/vendor-guest-agent.yaml
+# The imported disk is only as big as the image (about 3.5 GB). Grow it before
+# converting, or every clone starts nearly full.
+pve_api PUT  /nodes/<node>/qemu/9000/resize --data-urlencode disk=scsi0 --data-urlencode size=20G
 pve_api POST /nodes/<node>/qemu/9000/template
 
-# 4. Per dev VM: full clone, size, start.
+# 4a. Throwaway test VM: linked clone (full=0). Near-instant on LVM-thin, ZFS or
+#     Ceph, and it uses almost no space. Must live on the template's storage.
 pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
-  --data-urlencode full=1 --data-urlencode storage=local-lvm
+  --data-urlencode full=0
+# 4b. Long-lived VM: full clone, independent of the template, then size it.
+pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
+  --data-urlencode full=1 --data-urlencode storage=<vm-storage>
 pve_api PUT  /nodes/<node>/qemu/<vmid>/config --data-urlencode cores=4 --data-urlencode memory=8192 --data-urlencode onboot=1
 pve_api PUT  /nodes/<node>/qemu/<vmid>/resize --data-urlencode disk=scsi0 --data-urlencode size=64G
-pve_api POST /nodes/<node>/qemu/<vmid>/status/start
 
-# 5. The IP appears once cloud-init has installed the agent (about a minute).
-pve_api GET /nodes/<node>/qemu/<vmid>/agent/network-get-interfaces |
-  jq -r '[.data.result[] | select(.name!="lo") | .["ip-addresses"][] | select(.["ip-address-type"]=="ipv4") | .["ip-address"]][0]'
+# 5. Start, then poll the guest agent for the IP.
+pve_api POST /nodes/<node>/qemu/<vmid>/status/start
+pve_vm_ip <node> <vmid> 180
 ```
 
 cloud-init grows the root filesystem to the resized disk on first boot. The
 `qm` CLI equivalents are in `references/vm-creation-cheatsheet.md`.
+
+**Template lessons:**
+
+- **`ciupgrade` defaults to 1**: a full package upgrade on first boot. It took
+  1-5 minutes per distro and filled an unresized 3.5 GB disk. Proxmox puts it
+  in the generated *user* data as `package_upgrade: true`, so a `cicustom
+  vendor=` snippet does not turn it off. Set `ciupgrade=0` on test templates;
+  set `ciupgrade=1` on a long-lived clone if you want it patched at birth.
+- **Guest agent by distro family.** Ubuntu, Debian and openSUSE cloud images
+  lack `qemu-guest-agent`; the snippet above installs it. Rocky, Alma and
+  Fedora ship it, but a snippet with only
+  `runcmd: [[systemctl, enable, --now, qemu-guest-agent]]` is still the safe
+  way to make sure it runs. Without the agent, `pve_vm_ip` times out.
+- **Password login.** `cipassword` sets the password, but most cloud images
+  turn off SSH password authentication. Add `ssh_pwauth: true` to the snippet
+  if the user wants to log in with a password. Write any password file with
+  `printf '%s'`, never `echo`, or a trailing newline becomes part of the
+  password.
+- **End-of-life distros.** Once a release is EOL its security mirror can
+  return 404 and first-boot `apt` fails. Point apt at the archive mirror
+  (for Debian, `archive.debian.org`) with `write_files` in a snippet. The
+  `apt:` module can conflict with images that set
+  `apt_preserve_sources_list: true`.
+- **Do not delete a template that has linked clones.** Measured on LVM-thin:
+  Proxmox allowed it, removed the template's disks, and the clone kept
+  running, because a thin snapshot does not depend on its origin. On ZFS
+  or qcow2 file storage a linked clone reads from the template's base disk, so
+  there it is not safe. Use full clones for anything long-lived.
+- **IPs come from DHCP.** Re-read them from the guest agent after any reboot
+  instead of caching them.
+- **A cloned guest can lose its cloud-init drive** when the template's
+  cloud-init disk sits on different storage from the clone target (reported on
+  the Proxmox forum). Keep the template's disks on one storage, or re-add
+  `ide2=<storage>:cloudinit` on the clone.
 
 ### Creating a VM from an ISO
 
@@ -620,6 +743,19 @@ soft blocklist.** The sudoers allowlist permits them, but the agent will
 refuse and ask the user before invoking. This is intentional — see the
 *Soft blacklist* section above.
 
+**Snapshots and rollback, measured on PVE 9.2.2:**
+
+- A snapshot taken without RAM (`vmstate=0`, the default) rolls back to a
+  **stopped** VM. Start it again yourself, and check `status/current` rather
+  than assuming it is up.
+- Right after a rollback, a start can fail with `can't lock file` while
+  Proxmox finishes its cleanup. Retry a few times, 10-15 seconds apart, before
+  calling it a failure.
+- Guests without `onboot=1` stay off after the host reboots. After any host
+  reboot, list what is stopped and ask before starting the user's guests.
+- `protection=1` makes destroy and disk removal fail until it is cleared. Use
+  it on anything the user calls important.
+
 ### Backups
 
 ```bash
@@ -645,6 +781,38 @@ zstd -dc vzdump-qemu-<vmid>-<ts>.vma.zst > /tmp/check.vma && vma verify /tmp/che
 This needs free space equal to the uncompressed size. A restore to a scratch
 VMID, for example `qmrestore <file> <unused-vmid> --storage local-lvm`, is the
 real test.
+
+### Changing host networking with a dead-man switch
+
+A wrong bridge, VLAN or address change on the management interface cuts the
+agent off, and nobody is left to undo it. Arm a revert timer first, apply,
+verify from the agent's side, and only then disarm. Mode A, root SSH:
+
+```bash
+# 0. Refuse to start if someone else has pending, unapplied network changes.
+ssh root@<host> 'test ! -e /etc/network/interfaces.new || { echo "pending changes exist"; exit 1; }'
+
+# 1. Back up and arm a 120 s revert. AccuracySec=1s matters: systemd timers
+#    default to 1 minute of slack, so a "120 s" timer can fire much later.
+ssh root@<host> 'cp -a /etc/network/interfaces /root/interfaces.pre-agent &&
+  systemd-run --unit=net-revert --on-active=120 --timer-property=AccuracySec=1s \
+    /bin/sh -c "cp -a /root/interfaces.pre-agent /etc/network/interfaces && ifreload -a"'
+
+# 2. Stage and apply through the API (staged changes go to /etc/network/interfaces.new).
+pve_api POST /nodes/<node>/network --data-urlencode iface=vmbr10 --data-urlencode type=bridge --data-urlencode autostart=1
+upid=$(pve_api PUT /nodes/<node>/network | jq -r .data); pve_wait "$upid" 60
+
+# 3. Verify over the SAME path the agent uses, then disarm.
+ssh -o ConnectTimeout=5 root@<host> true &&
+  pve_api GET /nodes/<node>/network/vmbr10 | jq -e '.data.active == 1' >/dev/null &&
+  ssh root@<host> 'systemctl stop net-revert.timer'
+```
+
+If step 3 fails, do nothing: the timer restores the old file and reloads.
+`DELETE /nodes/<node>/network` discards staged changes that were never applied.
+Tested on PVE 9.2.2: the transient timer fires on time and `systemctl stop`
+disarms it. A real lockout being reverted was not exercised for this release;
+try the recipe on a harmless change (an unused bridge) before trusting it.
 
 ### Firewall (`pve-firewall`)
 
@@ -688,6 +856,10 @@ sudo -n qm migrate <vmid> <target-node> --online 1
 
 # HA status
 sudo -n ha-manager status
+
+# PVE 9: HA groups are replaced by HA rules (node and resource affinity).
+# Existing groups migrate automatically once every node runs PVE 9.
+sudo -n ha-manager rules list
 ```
 
 `scripts/cluster-info.sh` prints a one-shot summary of cluster state,
@@ -703,7 +875,7 @@ depends on what changed:
 | Created VM | `qm list`, then `qm status <vmid>`, then `pvesh get /cluster/resources --type vm` |
 | Started VM | `qm status <vmid>` shows `status: running`, console reachable |
 | Stopped VM | `qm status <vmid>` shows `status: stopped` |
-| Snapshotted VM | `qm snapshot <vmid>` lists the new snapname |
+| Snapshotted VM | `qm listsnapshot <vmid>` lists the new snapname |
 | Created LXC | `pct list`, then `pct status <ctid>` |
 | Added storage | `pvesm status` shows the new storage, `df -h /mnt/<mount>` shows correct size |
 | Imported ISO | `ls /var/lib/vz/template/iso/` shows the file, `pvesh get /nodes/.../storage/local/content --content iso` lists it |
@@ -733,11 +905,23 @@ each request. For ISO content, use `<path>/template/iso/`; see pitfall #4.
 
 ### 2. The `enterprise.proxmox.com` repos fail with 401 Unauthorized on every `apt update`
 
-Expected on any PVE host without a paid subscription key. The error is
-noise — `apt install` proceeds fine from the Debian repos. To silence it,
-either add the `pve-no-subscription` and `ceph-no-subscription` repos or
-disable the enterprise ones. The agent should never run `apt` itself —
-flag the noise and let the user decide.
+Expected on any PVE host without a paid subscription key. Debian packages
+still install, but the host gets **no Proxmox updates** until a working
+Proxmox repository is configured. PVE 9 uses deb822 files:
+`/etc/apt/sources.list.d/pve-enterprise.sources` and `ceph.sources`. To switch,
+add an `Enabled: no` line to each enterprise entry and add
+`/etc/apt/sources.list.d/proxmox.sources`:
+
+```text
+Types: deb
+URIs: http://download.proxmox.com/debian/pve
+Suites: trixie
+Components: pve-no-subscription
+Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+```
+
+This changes where the host's updates come from, so it is the user's call.
+The agent proposes it and runs it only with a yes.
 
 ### 3. Disk full after a copy or install — and the agent can't run `du` to triage
 
@@ -903,6 +1087,59 @@ explicitly set up that way. For a single-node homelab, `qm migrate` is
 not useful; for migration to work, the target must have the same storage
 configured.
 
+### 18. A network probe on the host says "blocked" but the port is open
+
+`/bin/sh` on a PVE host is `dash`, which has no `/dev/tcp`. A probe such as
+`sh -c 'echo > /dev/tcp/10.0.0.1/22'` fails whatever the port does. Run
+probes with bash: `timeout 3 bash -c '</dev/tcp/<ip>/<port>'`.
+
+### 19. A laptop used as a PVE host vanishes from the network
+
+By default logind suspends a laptop when its lid closes, and a suspended host
+takes every guest down with it and may not wake on its own. On a laptop host,
+with the user's yes, add `/etc/systemd/logind.conf.d/10-lid-ignore.conf`:
+
+```ini
+[Login]
+HandleLidSwitch=ignore
+HandleLidSwitchExternalPower=ignore
+HandleLidSwitchDocked=ignore
+```
+
+When any host drops off the network unexpectedly, read the previous boot's
+log first: `journalctl -b -1 -n 50`.
+
+### 20. A VPN client on the host rewrites `/etc/resolv.conf`
+
+Proxmox manages the host's DNS (Node → System → DNS). A VPN client that also
+manages DNS can overwrite it and break name resolution for the host. For
+Tailscale, use `tailscale set --accept-dns=false`.
+
+### 21. VM disks ended up on the boot drive or a slow drive
+
+The installer's `local-lvm` shares the boot drive, so a full VM disk can fill
+it. Cheap drives can also write far slower than they read. Keep VM disks on
+dedicated storage, and move a disk while the VM runs:
+
+```text
+POST /nodes/<node>/qemu/<vmid>/move_disk  disk=scsi0 storage=<target> delete=1
+```
+
+`delete=1` removes the source copy after a successful move. Without it the old
+disk stays behind as an `unused` entry.
+
+### 22. Guest NIC names do not follow Proxmox's `net0`, `net1` order
+
+Inside the guest, `eth0` is not always `net0`; some router and firewall
+images enumerate NICs in a different order. Match interfaces by MAC address
+(`GET /nodes/<node>/qemu/<vmid>/config` shows `netN=virtio=<MAC>,...`).
+
+### 23. A serial console shows nothing, or garbled lines
+
+With `serial0=socket`, output written while nothing is attached is lost, so
+a boot can look silent. Attach before starting the guest (`qm terminal
+<vmid>`; exit with Ctrl-O), and send long commands in short pieces.
+
 ## References
 
 - `references/storage-layouts.md` — directory vs LVM-thin vs ZFS, when to
@@ -916,20 +1153,23 @@ configured.
   (resize disk, add NIC, snapshot, detach ISO with `--ide2 none`).
 - `references/firewall-basics.md` — cluster/node/VM firewall hierarchy,
   common rule patterns, and the default behavior once pve-firewall is enabled.
-- `references/proxmox-api-token.md` — using `pveum token` for
-  API-based management as an alternative to SSH + sudo.
+- `references/proxmox-api-token.md` — creating, scoping and revoking API
+  tokens with `pveum`, including the pool-scoped least-privilege setup.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 
 ## Scripts
 
+- `scripts/pve-api.sh` — source it for `pve_api` (pinned TLS, token read from
+  a file per call), `pve_wait` (task exit status, log on failure, timeout) and
+  `pve_vm_ip` (guest-agent IP polling). Tested by `tests/pve-api.test.sh`.
 - `scripts/vm-from-iso.sh` — wrapper around `qm create` with sensible
   defaults, prompts for VMID and storage target.
 - `scripts/lxc-from-template.sh` — wrapper around `pct create` with the
   common Debian/Ubuntu/Alpine template paths.
-- `scripts/iso-import.sh` — Ventoy USB → Proxmox ISO storage with
+- `scripts/iso-import.sh` — Ventoy USB → `<mount>/template/iso/` with a
   pre-flight size check (refuses to overflow the target fs) and per-file
-  verification. Run on the Proxmox host as root.
+  verification, then lists what Proxmox sees. Run on the Proxmox host as root.
 - `scripts/add-nvme-storage.sh` — full pipeline walkthrough: identify
   drives by serial, prompt the user to confirm scope, give fdisk
   instructions for 1-or-2 partition layouts, instruct on mkfs+mount,
@@ -942,7 +1182,7 @@ configured.
   VMs, LXC containers, recent pvedaemon/pveproxy errors. Run via SSH
   from the agent host: `ssh zen-agent@<proxmox> 'bash /tmp/proxmox-status.sh'`.
 - `scripts/cluster-info.sh` — multi-node summary: cluster status, all
-  nodes, all VMs across nodes, HA groups, recent cluster log entries.
+  nodes, all VMs across nodes, HA status and rules, recent cluster log entries.
 
 ## Templates
 

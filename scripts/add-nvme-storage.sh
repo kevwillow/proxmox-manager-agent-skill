@@ -111,7 +111,7 @@ if [[ "$PARTITION_COUNT" == "1" ]]; then
     echo "  [Enter] # default last sector (full disk)"
     echo "  w       # write and exit"
 else
-    DISK_GB=$(($(cat /sys/block/$(basename $TARGET_DRIVE)/size) * 512 / 1024 / 1024 / 1024))
+    DISK_GB=$(($(cat "/sys/block/$(basename "$TARGET_DRIVE")/size") * 512 / 1024 / 1024 / 1024))
     HALF_GB=$((DISK_GB / 2))
     echo "  g       # new GPT table"
     echo "  n       # new partition"

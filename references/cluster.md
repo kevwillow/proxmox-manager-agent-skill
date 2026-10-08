@@ -57,37 +57,32 @@ correct fix is three nodes.
 
 ## HA (High Availability)
 
-HA groups let VMs automatically restart on another node if their
-primary node fails. The fencing mechanism uses
-`/etc/pve/ha/fencing.cfg` and the node's BMC/IPMI for power control.
+HA restarts a guest on another node when its node fails. It needs a quorate
+cluster (three or more nodes) and storage every candidate node can reach.
 
 ```bash
-# Create a HA group (priority list of nodes)
-ha-manager groupadd mygroup -nodes "apollo:100,artemis:50,nova:1"
+# Put a VM under HA
+ha-manager add vm:100 --max_restart 3 --max_relocate 2
 
-# Add a VM to HA, on group mygroup
-ha-manager add vm:100 --group mygroup --max_restart 3 --max_relocate 2
+# PVE 9: HA rules replace HA groups. Prefer node1, then node2:
+ha-manager rules add node-affinity prefer-node1 --resources vm:100 --nodes "node1:2,node2:1"
+# Keep two VMs on separate nodes:
+ha-manager rules add resource-affinity spread-db --resources vm:101,vm:102 --affinity negative
 
-# HA status
 ha-manager status
+ha-manager rules list
 ```
 
-**Fencing is critical.** Without it, a failed node can hold VM state
-and the surviving nodes can't safely start the VMs. PVE supports
-IPMI and SSH-based fencing. Configure it BEFORE relying on HA:
+On PVE 8, the older equivalent is `ha-manager groupadd <group> --nodes ...`
+plus `ha-manager add vm:100 --group <group>`. Groups migrate to rules
+automatically once every node runs PVE 9.
 
-```bash
-# Add a fencing device (IPMI example)
-ha-manager fence-add ipmi-apollo \
-    --type ipmi \
-    --host apollo \
-    --ipaddr 192.168.50.10 \
-    --username admin \
-    --password <ipmi-password>
-
-# Bind it to the node
-ha-manager fence-add-node apollo ipmi-apollo
-```
+**Fencing is automatic and watchdog-based.** A node that loses quorum stops
+renewing its watchdog and resets itself, so the survivors can safely start
+its guests. The default is the Linux `softdog`; a hardware watchdog can be
+set in `/etc/default/pve-ha-manager`. There is no `ha-manager` command to add
+fence devices. Before relying on HA, test it: pull a node's network cable and
+watch `ha-manager status` on a survivor.
 
 ## Live migration
 

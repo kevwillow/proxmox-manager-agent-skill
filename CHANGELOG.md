@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.2.0 (2026-10-07)
+
+Added:
+- `scripts/pve-api.sh`: sourceable `pve_api`, `pve_wait` (returns non-zero on a
+  failed task, prints its log, times out) and `pve_vm_ip`. Offline test in
+  `tests/pve-api.test.sh`.
+- Mode A-narrow: a pool-scoped API token built from four built-in roles, with
+  the 403 messages measured on PVE 9.2.2 (`SDN.Use` on
+  `/sdn/zones/localnetwork/<bridge>` is required even without SDN).
+- Operating rules: survey first, own a VMID range, respect `protection` and
+  `keep`, read the API schema from the host with `pvesh usage`, wait for every
+  task, keep secrets in files.
+- Cloud-init lessons: `ciupgrade` defaults to a full upgrade and lives in user
+  data, grow the imported 3.5 GB disk before templating, guest agent per distro
+  family, password login, EOL mirrors, linked vs full clones.
+- Snapshot and rollback behaviour: no-RAM snapshots roll back to a stopped VM;
+  retry `can't lock file` after a rollback.
+- Dead-man revert timer for host network changes (`AccuracySec=1s` matters).
+- Drive inventory and staging through the API (`/disks/list`, `wearout` is life
+  remaining, `/disks/lvmthin` and `/disks/directory`).
+- Pitfalls 18-23: dash on the host, laptop lid suspend, VPN DNS, VM disks on the
+  boot drive, guest NIC order, serial console output.
+- PVE 9 notes: HA rules replace HA groups, `VM.Monitor` removed,
+  `VM.GuestAgent.*` added, deb822 repository files.
+
+Fixed:
+- `scripts/iso-import.sh` copied ISOs to the storage root, where Proxmox does
+  not list them; it now copies to `template/iso/`. It also exited with status 1
+  after the first verified copy (`((x++))` under `set -e`), never detected an
+  already-mounted source, and ran a false `--is_mountpoint` "re-index".
+- `install.sh` never printed the OpenClaw workspace line (compared a literal
+  string), and a plain `./install.sh` skipped Cursor.
+- `references/proxmox-api-token.md`: `--expire` takes a Unix timestamp, not days;
+  `pvesh` cannot use a token; privsep defaults; removed `VM.Monitor`.
+- `references/cluster.md`: removed the nonexistent `ha-manager fence-add`;
+  fencing is watchdog-based.
+- `references/vm-creation-cheatsheet.md`: the cloud-init drive is
+  `<storage>:cloudinit`, not a seed ISO; Python's `crypt` module is gone.
+- Verification table: `qm listsnapshot`, not `qm snapshot`.
+- README: the safety model no longer claims a leaked Mode B key cannot harm the
+  host; agent count and file list corrected.
+- Removed the dependency on a skill that is not published.
+
 ## 1.1.0 (2026-10-03)
 
 - Add admin API-token plus root SSH access mode and retain the scoped SSH mode.

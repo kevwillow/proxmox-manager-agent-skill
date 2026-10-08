@@ -36,7 +36,7 @@ pvesh get /version 2>/dev/null | head -10
 
 echo
 echo "=== Node resources ==="
-pvesh get /nodes/$(hostname)/status 2>/dev/null | head -20
+pvesh get "/nodes/$(hostname)/status" 2>/dev/null | head -20
 
 echo
 echo "=== Storage pools ==="

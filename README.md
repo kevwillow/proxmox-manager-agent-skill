@@ -1,17 +1,47 @@
 # Proxmox Manager Agent Skill
 
-A fully-featured AI agent skill for managing a Proxmox VE homelab or small
-cluster via scoped SSH access. Works with Hermes, Claude Code, Codex CLI,
-OpenCode, and any other agent that loads skills from a `SKILL.md` file.
+An AI agent skill for managing a Proxmox VE homelab or small cluster through
+the Proxmox API and SSH. Works with Hermes, Claude Code, Codex CLI, OpenCode,
+OpenClaw, Cursor, and any other agent that loads skills from a `SKILL.md`
+file. Written against PVE 9.2 and checked on a live 9.2.2 host; most of it
+also applies to PVE 8.
 
 ## What it does
 
-- Create, start, stop, snapshot, destroy VMs and LXC containers
-- Manage storage (ISOs, dir/lvmthin/zfs pools, ISO imports with disk-full guards)
+- Create, start, stop, snapshot and destroy VMs and LXC containers
+- Build cloud-init templates and clone test VMs in under a minute
+- Manage storage: list drives by serial, stage spare drives, import ISOs with
+  disk-full guards
 - Backups and restores (vzdump, qmrestore)
+- Host network changes behind a dead-man revert timer
 - Firewall rules (pve-firewall, security groups)
-- Cluster operations (multi-node, HA, live migration, replication)
+- Cluster operations (multi-node, HA rules, live migration)
 - Read-only status, observation, and audit-friendly reporting
+
+## Access modes
+
+Pick one per host. The confirmation rules apply in every mode.
+
+| Mode | How the agent connects | What a leaked credential can do |
+|---|---|---|
+| A: admin | `Administrator` API token plus a root SSH key | Everything. Simplest; for hosts the agent fully runs. |
+| A-narrow | API token limited to one resource pool | Only the guests in that pool. The one mode that contains a leak. |
+| B: scoped SSH | Non-root user with a sudoers allowlist | Root-equivalent (the allowlist allows `find -exec`, `pvesh`, `qm` hookscripts). An audit trail, not a wall. |
+
+Setup for Mode A and A-narrow is in `SKILL.md` (*Access modes*). Setup for
+Mode B is under *Prerequisites* below.
+
+## What's new in 1.2.0
+
+- Tested API helpers in `scripts/pve-api.sh`: task waits that fail loudly and
+  time out, and guest-agent IP polling.
+- A pool-scoped least-privilege token recipe, with the PVE 9 privilege changes.
+- Operating rules: survey first, own a VMID range, read the API schema from
+  the host, wait for every task.
+- Cloud-init lessons from a 16-distro template matrix (`ciupgrade`, disk size,
+  guest agent per distro, password login, EOL mirrors, linked clones).
+- Dead-man revert timer for host network changes.
+- Fixes to scripts and references that were wrong; see `CHANGELOG.md`.
 
 ## What it doesn't do
 
@@ -29,7 +59,7 @@ OpenCode, and any other agent that loads skills from a `SKILL.md` file.
 ```bash
 git clone https://github.com/kevwillow/proxmox-manager-agent-skill.git
 cd proxmox-manager-agent-skill
-./install.sh                # installs to all 4 agents
+./install.sh                # installs for all 6 agents
 # or
 ./install.sh --agent hermes # installs to Hermes only
 ```
@@ -93,16 +123,18 @@ After install, the agent picks up the skill automatically. Ask things like:
 - "Show me a storage summary."
 
 The agent will:
-1. Verify it can SSH to the Proxmox host as the scoped agent user.
-2. Verify the sudoers allowlist covers what it needs.
-3. Run the appropriate `qm`, `pct`, `pvesh`, `pvesm`, etc. command.
-4. Verify the operation took effect.
-5. Tell you what it did and any pitfalls to watch for.
+1. Survey the host read-only: version, nodes, guests, storage.
+2. Check its access works (API token or SSH, depending on the mode).
+3. Run the API call or `qm`, `pct`, `pvesh`, `pvesm` command, and wait for
+   the task to finish.
+4. Verify the result took effect.
+5. Ask before anything irreversible, and tell you what it did.
 
 ## Prerequisites
 
-The skill assumes you have already set up scoped SSH access from the
-agent's host to your Proxmox host. That setup is one-time per host:
+For Mode A or A-narrow, follow *Access modes* in `SKILL.md`. For Mode B, set
+up scoped SSH access from the agent's host to your Proxmox host. That setup
+is one-time per host:
 
 1. **Create a dedicated agent user on the Proxmox host:**
    ```bash
@@ -164,9 +196,10 @@ proxmox-manager-agent-skill/
 │   ├── iso-workflow.md         Ventoy USB to Proxmox ISO storage
 │   ├── vm-creation-cheatsheet.md  Ubuntu/Debian/cloud-init/Windows recipes
 │   ├── firewall-basics.md      pve-firewall cluster/node/VM hierarchy
-│   ├── proxmox-api-token.md    API token alternative to SSH + sudo
-│   └── cluster.md              multi-node, HA, live migration
+│   ├── proxmox-api-token.md    API tokens, pool-scoped least privilege
+│   └── cluster.md              multi-node, HA rules, live migration
 ├── scripts/
+│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip
 │   ├── vm-from-iso.sh          Wrapper around qm create
 │   ├── lxc-from-template.sh    Wrapper around pct create
 │   ├── iso-import.sh           Ventoy USB → Proxmox ISO with size guard
@@ -177,27 +210,29 @@ proxmox-manager-agent-skill/
 │   ├── zen-agent-sudoers       Drop-in /etc/sudoers.d/zen-agent
 │   ├── 99-zen-agent-sshd.conf  Drop-in sshd Match block
 │   └── install-sudoers.sh      Install + validate the sudoers file
-└── examples/
-    └── (planned: example conversation logs)
+└── tests/
+    └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```
 
 ## Safety model
 
-The skill enforces a layered safety model:
+The skill layers its safety model:
 
-1. **sudoers allowlist** — the agent CAN'T run commands not in the list.
-2. **Agent soft-blocklist** — for commands like `qm destroy` that are in
-   sudoers but have irreversible effects, the agent asks the user before
-   invoking.
-3. **Hard agent blocklist** — commands like `mkfs`, `dd`, `fdisk` are
-   NEVER run by the agent, even if sudoers permits them. The agent
-   identifies drives, gives the user the exact command, and verifies the
-   result.
-4. **Audit trail** — every sudo invocation is logged to
-   `/var/log/auth.log` with full input/output capture.
-
-A leaked agent key = a scoped user with a curated allowlist. The
-attacker can manage VMs but not destroy the host.
+1. **Credential scope.** A pool-scoped token (Mode A-narrow) is the only
+   layer that actually contains a leaked credential. The admin token and the
+   sudoers allowlist are both root-equivalent.
+2. **Agent soft-blocklist.** For irreversible actions like `qm destroy`,
+   `qm stop` or a rollback, the agent asks the user first, whatever its
+   rights allow.
+3. **Hard agent blocklist.** The agent never runs `mkfs`, `dd` or `fdisk`
+   itself. It identifies drives by serial, gives the user the exact command,
+   and verifies the result. The API's disk-wiping calls get the same
+   confirmation.
+4. **Ownership.** The agent works in its own VMID range and leaves guests
+   marked `protection=1` or `keep` alone.
+5. **Audit trail.** API calls are logged in `/var/log/pveproxy/access.log`
+   and every task carries the token ID. In Mode B, every sudo invocation is
+   logged with input and output capture.
 
 ## Contributing
 

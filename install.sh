@@ -29,7 +29,7 @@
 set -euo pipefail
 
 # --- Defaults ---
-AGENTS="hermes,claude,codex,opencode,openclaw"
+AGENTS="hermes,claude,codex,opencode,openclaw,cursor"
 ACTION="install"
 PREFIX="$HOME"
 
@@ -199,7 +199,7 @@ do_list() {
             echo "  [$agent] $target (will install)"
         fi
     done
-    if [[ "AGENTS" == *"openclaw"* ]]; then
+    if [[ " ${AGENT_LIST[*]} " == *" openclaw "* ]]; then
         echo "  OpenClaw workspace: $OPENCLAW_WORKSPACE"
     fi
     echo

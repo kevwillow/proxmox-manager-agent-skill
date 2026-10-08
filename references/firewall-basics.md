@@ -131,17 +131,17 @@ sudo -n pvesh create /cluster/firewall/rules \
 VMID=100
 
 # LAN HTTP/HTTPS inbound
-sudo -n pvesh create /nodes/apollo/qemu/$VMID/firewall/rules \
+sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
     --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp
-sudo -n pvesh create /nodes/apollo/qemu/$VMID/firewall/rules \
+sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
     --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp
 
 # Tailnet SSH (so you can SSH from your phone over tailscale)
-sudo -n pvesh create /nodes/apollo/qemu/$VMID/firewall/rules \
+sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
     --action ACCEPT --type in --source 100.64.0.0/10 --dport 22 --proto tcp
 
 # Enable firewall for this VM
-sudo -n pvesh set /nodes/apollo/qemu/$VMID/firewall --enable 1
+sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall --enable 1
 ```
 
 ## Pitfalls

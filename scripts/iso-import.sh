@@ -12,9 +12,10 @@
 #   2. Lists ISOs with sizes
 #   3. Compares total size to free space on target
 #   4. ABORTS if target would overflow
-#   5. Copies ISOs to target
-#   6. Re-indexes Proxmox storage (via --is_mountpoint no toggle) so the
-#      ISOs show up in `pvesm list` and the web UI dropdown
+#   5. Copies ISOs to <target-mount>/template/iso/, the only directory a
+#      Proxmox `dir` storage lists ISOs from
+#   6. Lists the storage's ISO content if the target is registered storage.
+#      There is no index to refresh: Proxmox scans the directory on each request.
 #
 # Safety: never deletes files. Never overwrites the boot disk.
 # Refuses to run if target is on the same mount as the boot disk AND
@@ -57,14 +58,14 @@ if [[ "$BOOT_DEV" == "$TARGET_DEV" ]]; then
 fi
 
 # Make sure the Ventoy filesystem is mounted
-if ! mount | grep -q "on $VENTOY_DEV "; then
+if ! findmnt -n "$VENTOY_DEV" >/dev/null; then
     echo "Mounting $VENTOY_DEV temporarily..."
     TEMP_MOUNT=$(mktemp -d)
     mount "$VENTOY_DEV" "$TEMP_MOUNT"
     VENTOY_PATH="$TEMP_MOUNT"
     CLEANUP_MOUNT=1
 else
-    VENTOY_PATH=$(findmnt -no TARGET "$VENTOY_DEV")
+    VENTOY_PATH=$(findmnt -no TARGET "$VENTOY_DEV" | head -1)
     CLEANUP_MOUNT=0
 fi
 
@@ -95,6 +96,8 @@ echo "Total: ${TOTAL_HUMAN} across ${#ISO_FILES[@]} files"
 
 # --- Space check ---
 
+ISO_DIR="$TARGET_MOUNT/template/iso"
+
 AVAIL_BYTES=$(df -B1 "$TARGET_MOUNT" | tail -1 | awk '{print $4}')
 AVAIL_HUMAN=$(numfmt --to=iec --suffix=B "$AVAIL_BYTES")
 echo "Available on $TARGET_MOUNT: $AVAIL_HUMAN"
@@ -110,7 +113,7 @@ fi
 # --- Confirm ---
 
 echo
-echo "About to copy ${#ISO_FILES[@]} ISOs ($TOTAL_HUMAN) to $TARGET_MOUNT"
+echo "About to copy ${#ISO_FILES[@]} ISOs ($TOTAL_HUMAN) to $ISO_DIR"
 read -p "Continue? [y/N] " -n 1 -r
 echo
 [[ $REPLY =~ ^[Yy]$ ]] || { echo "Aborted."; exit 1; }
@@ -119,7 +122,8 @@ echo
 
 echo
 echo "Copying..."
-cp -v "${ISO_FILES[@]}" "$TARGET_MOUNT/" 2>&1 | tail -20
+mkdir -p "$ISO_DIR"
+cp -v "${ISO_FILES[@]}" "$ISO_DIR/" 2>&1 | tail -20
 
 # --- Post-copy ---
 
@@ -130,11 +134,11 @@ COPY_FAIL=0
 for iso in "${ISO_FILES[@]}"; do
     name=$(basename "$iso")
     SRC_SIZE=$(stat -c %s "$iso")
-    DST_SIZE=$(stat -c %s "$TARGET_MOUNT/$name" 2>/dev/null || echo 0)
+    DST_SIZE=$(stat -c %s "$ISO_DIR/$name" 2>/dev/null || echo 0)
     if [[ "$SRC_SIZE" == "$DST_SIZE" ]]; then
-        ((COPY_OK++))
+        COPY_OK=$((COPY_OK + 1))   # not ((x++)): it returns 1 at 0 and set -e exits
     else
-        ((COPY_FAIL++))
+        COPY_FAIL=$((COPY_FAIL + 1))
         echo "  MISMATCH: $name (src=$SRC_SIZE, dst=$DST_SIZE)"
     fi
 done
@@ -146,21 +150,19 @@ if (( COPY_FAIL > 0 )); then
     exit 1
 fi
 
-# Re-index if this is a registered Proxmox storage.
-# NOTE: `pvesm scan <name>` does NOT exist on PVE 9.x — its purpose
-# was folded into the `set` command's `--is_mountpoint` toggle. Toggle
-# it off so Proxmox scans the path and indexes existing files, then
-# toggle back on so future operations don't trigger unexpected
-# reformatting.
-STORAGE_ID=$(pvesm status 2>/dev/null | awk -v mp="$TARGET_MOUNT" '$1 != "Name" && $NF == mp {print $1; exit}')
+# Show what Proxmox now lists, if the target is registered storage.
+# `pvesm status` has no path column, so ask each storage where its ISOs live.
+STORAGE_ID=""
+for id in $(pvesm status 2>/dev/null | awk 'NR>1 {print $1}'); do
+    if [[ "$(pvesm path "$id:iso/x.iso" 2>/dev/null || true)" == "$ISO_DIR/x.iso" ]]; then
+        STORAGE_ID=$id
+        break
+    fi
+done
 if [[ -n "$STORAGE_ID" ]]; then
     echo
-    echo "Target is Proxmox storage '$STORAGE_ID' — re-indexing..."
-    pvesm set "$STORAGE_ID" --is_mountpoint no
-    echo
-    echo "ISO listing:"
-    pvesm list "$STORAGE_ID"
-    pvesm set "$STORAGE_ID" --is_mountpoint yes
+    echo "ISO content of Proxmox storage '$STORAGE_ID':"
+    pvesm list "$STORAGE_ID" --content iso
 fi
 
 echo
