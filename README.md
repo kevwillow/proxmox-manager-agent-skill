@@ -34,10 +34,24 @@ Mode B is under *Prerequisites* below.
 **With an MCP server.** The skill works alongside a Proxmox MCP server: the
 server makes the API calls, the skill supplies the rules and the pitfalls.
 `references/mcp-servers.md` compares Proximo and ProxmoxMCP-Plus, sets up
-Proximo with a pool-scoped token (`templates/proximo-token-setup.sh`), and
-lists what was measured through it.
+Proximo with a read-only token and a pool-scoped write token
+(`templates/proximo-token-setup.sh`), and lists what was measured through it.
 
-## What's new in 1.4.0
+## What's new in 1.5.0
+
+- Updated for Proximo 0.45+, which replaced its per-task tools with a few
+  tools that take a raw API path: new setup, the API paths for common work,
+  and every gotcha re-measured on PVE 9.2.2 with Proximo 0.46.2.
+- A restore through the raw API keeps the original's MAC address and SMBIOS
+  UUID unless the call passes `unique=1`. The skill now says so wherever it
+  restores.
+- `templates/proximo-token-setup.sh` makes the read/write token pair that
+  `proximo arm` and `proximo disarm` swap between. It grants what a clone from
+  a template needs (Proximo's own `mint --write` recipe gets 403 on
+  `VM.Clone`), keeps the read token able to see the pool, and its undo steps
+  remove the tokens before the user so no ACL lines are left behind.
+
+## What was new in 1.4.0
 
 - Works alongside a Proxmox MCP server. Proximo was set up and tested live:
   setup steps, tool map, and the gotchas found through it.
@@ -244,7 +258,7 @@ proxmox-manager-agent-skill/
 │   ├── zen-agent-sudoers       Drop-in /etc/sudoers.d/zen-agent
 │   ├── 99-zen-agent-sshd.conf  Drop-in sshd Match block
 │   ├── install-sudoers.sh      Install + validate the sudoers file
-│   └── proximo-token-setup.sh  Pool-scoped API token for an MCP server
+│   └── proximo-token-setup.sh  Read + pool-scoped write tokens for an MCP server
 └── tests/
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```

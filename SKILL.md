@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through the PVE API (admin or pool-scoped token) plus root SSH, a scoped SSH user, or alongside a Proxmox MCP server such as Proximo. Covers VM and LXC lifecycle, cloud-init templates and fast clones, ISO and storage management, backup/restore, network bridges with a dead-man revert timer, firewall, cluster operations, and PVE 9.x gotchas. Includes tested API helpers, a least-privilege token recipe, and a sudoers allowlist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'make a template', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.4.0
+version: 1.5.0
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -47,11 +47,11 @@ what order, with what pitfall-avoidance.
 
 If the session has a Proxmox MCP server connected (for example Proximo), use
 its tools for API work instead of hand-written `curl`, and keep following this
-skill: the rules above, the pitfalls below, and the pool-scoped token. An MCP
-server that returns "submitted" has started a task, not finished it; wait on
-the task before the next change. Setup, the tool map, and measured gotchas
-(including a QEMU restore that duplicates the original's MAC address) are in
-`references/mcp-servers.md`.
+skill: the rules above, the pitfalls below, and the pool-scoped token. Plan
+every change before running it, and pass `unique=1` on every restore: without
+it the copy keeps the original's MAC address and SMBIOS UUID. With Proximo,
+work disarmed and let the user run `proximo arm` when a change is needed.
+Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
 
 ## When to Use
 
@@ -173,7 +173,8 @@ Measured end to end on PVE 9.2.2 with a `privsep=1` token (the recipe above
 uses `privsep=0` for brevity; with `privsep=1`, give every grant to both the
 token and its user), plus `PVEAuditor` on `/` so it can read everything: clone into the pool, start, snapshot, stop, back up, restore and
 delete all worked, and a clone without `pool=` was refused with 403.
-`templates/proximo-token-setup.sh` creates exactly this token. With such a
+`templates/proximo-token-setup.sh` creates this token (as `proximo@pve!write`)
+plus a read-only one. With such a
 token, delete a guest's backups before the guest itself: afterwards the
 backups belong to nothing in the pool and the token gets 403.
 The token cannot set root-only options (`args`, `hookscript`, host devices)
@@ -1259,7 +1260,7 @@ Stop and tell the user before a write would push the pool past about 80%.
 - `references/firewall-basics.md` — cluster/node/VM firewall hierarchy,
   common rule patterns, and the default behavior once pve-firewall is enabled.
 - `references/mcp-servers.md` — choosing and setting up a Proxmox MCP server
-  (Proximo), its tool map, and gotchas measured through it.
+  (Proximo 0.45+), its API paths, and gotchas measured through it.
 - `references/proxmox-api-token.md` — creating, scoping and revoking API
   tokens with `pveum`, including the pool-scoped least-privilege setup.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
@@ -1303,9 +1304,10 @@ Stop and tell the user before a write would push the pool past about 80%.
   key (`from="<ip>"` in `authorized_keys`), as its header explains.
 - `templates/install-sudoers.sh` — script to install and validate the
   sudoers file safely. Run as root on the Proxmox host.
-- `templates/proximo-token-setup.sh` — creates the pool-scoped API token
-  (read everywhere, change only pool `agent`) for an MCP server or Mode
-  A-narrow. Edit its four settings, run once as root on the Proxmox host.
+- `templates/proximo-token-setup.sh` — creates a read-only token and a
+  pool-scoped write token (read everywhere, change only pool `agent`) for an
+  MCP server or Mode A-narrow. Edit its settings, run once as root on the
+  Proxmox host.
 
 ## Cross-Agent Compatibility
 

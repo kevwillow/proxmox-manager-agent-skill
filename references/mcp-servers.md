@@ -2,26 +2,30 @@
 
 Read this when the session has a Proxmox MCP server connected, or when the
 user asks to set one up. The MCP server makes the API calls; this skill still
-supplies the rules (survey first, own a VMID range, wait for every task,
-confirm anything irreversible) and the pitfalls.
+supplies the rules (survey first, own a VMID range, confirm anything
+irreversible) and the pitfalls.
 
-Everything below was measured on PVE 9.2.2 on 2026-10-08 with Proximo 0.44.1
-unless a line says otherwise.
+Everything below was measured on PVE 9.2.2 on 2026-10-23 with Proximo 0.46.2
+unless a line says otherwise. Proximo 0.45.0 replaced its per-task tools
+(`pve_clone`, `pve_restore`, ...) with a few tools that take a raw API path;
+notes written for 0.44 do not apply to it.
 
 ## Choosing one
 
 | | Proximo | ProxmoxMCP-Plus |
 |---|---|---|
 | Repo | github.com/john-broadway/proximo (Apache-2.0) | github.com/RekklesNA/ProxmoxMCP-Plus (MIT) |
-| Before a change | Every mutation returns a PLAN (blast radius, risk); it runs only with `confirm=true` | Optional static approval token |
+| Before a change | Every mutation can be planned first; the MCP tool only plans unless `confirm=true` | Optional static approval token |
+| Write access | A read token by default; `proximo arm` swaps in a write token, `proximo disarm` swaps it back | One token |
 | Audit | Keyed, hash-chained ledger; `audit_verify` checks it | Job history in SQLite |
-| Coverage | PVE, PBS, PMG, PDM: 924 tools behind a small search "door" (about 1.7k tokens of context) | 54 tools: VM/LXC lifecycle, snapshots, backup/restore, jobs, logs |
-| Self-signed PVE certificate | Pins the node certificate (`PROXIMO_CA_BUNDLE`) | TLS on/off only |
+| Coverage | Every published PVE, PBS, PMG and PDM API path, behind six tools | VM/LXC lifecycle, snapshots, backup/restore, jobs, logs (54 tools on 2026-10-08) |
+| Self-signed PVE certificate | Pins the node certificate (`PROXIMO_CA_BUNDLE`) or fingerprint | TLS on/off only |
 
 Both were active in October 2026. Proximo was chosen here for its plan-first
-design and coverage; its risk is size (about 108k lines, one maintainer).
-Contribute fixes upstream rather than forking: its CONTRIBUTING asks for an
-issue first for anything non-trivial.
+design, its read/write token split and its coverage. It has one maintainer and
+changes fast (0.44 to 0.46 in two weeks, with breaking changes): pin a version
+and re-check this file after upgrading. Report defects upstream as issues; its
+CONTRIBUTING asks for an issue before anything non-trivial.
 
 ## Setting up Proximo
 
@@ -36,89 +40,124 @@ issue first for anything non-trivial.
    uv tool install 'proximo-proxmox==<version>'
    ```
 
-2. **Mint a pool-scoped token on the PVE host** (the user runs it as root):
-   `templates/proximo-token-setup.sh`. It grants read everywhere
-   (`PVEAuditor` on `/`), full control only of guests in pool `agent`, clone
-   rights on a `templates` pool, disk space on the VM and backup storages, and
-   `SDN.Use` on the bridge. The secret goes straight to a mode-600 file and is
-   never printed. Copy it to the agent's machine, then delete it on the host.
+   Expect `john-broadway/proximo release-pypi.yml`.
+
+2. **Mint the two tokens on the PVE host** (the user runs it as root):
+   `templates/proximo-token-setup.sh`. It makes `proximo@pve!read`
+   (`PVEAuditor` on `/`) and `proximo@pve!write` (full control only of guests
+   in pool `agent`, clone rights on a `templates` pool, disk space on the VM
+   and backup storages, `SDN.Use` on the bridge). Secrets go straight to
+   mode-600 files and are never printed. The user copies both to the agent's
+   machine and deletes them on the host. Use it instead of
+   `proximo mint pve --write`, whose write token cannot clone a template
+   (see *Gotchas*).
 
 3. **Pin the node certificate and write the config** (no secrets in it):
 
    ```bash
    scp root@<host>:/etc/pve/local/pve-ssl.pem ~/.config/proximo/pve-node.pem
+   install -m 600 ~/.config/proximo/pve-read.token ~/.config/proximo/pve.served
    cat > ~/.config/proximo/proximo.env <<'EOF'
    PROXIMO_API_BASE_URL=https://<host>:8006/api2/json
    PROXIMO_NODE=<node>
-   PROXIMO_TOKEN_PATH=<home>/.config/proximo/pve.token
+   PROXIMO_TOKEN_PATH=<home>/.config/proximo/pve.served
+   PROXIMO_READONLY_SOURCE=<home>/.config/proximo/pve-read.token
+   PROXIMO_ARM_SOURCE=<home>/.config/proximo/pve-write.token
    PROXIMO_VERIFY_TLS=true
    PROXIMO_CA_BUNDLE=<home>/.config/proximo/pve-node.pem
    EOF
    ```
 
-   Compare the pinned file's fingerprint with the live one
-   (`openssl s_client ... | openssl x509 -fingerprint -sha256`) before trusting it.
-   The stdio server loads `proximo.env` itself, so the MCP client entry needs
-   no `env` block.
+   `pve.served` is the file Proximo reads; `arm` and `disarm` copy the write
+   or read token into it. Compare the pinned certificate's fingerprint with
+   the live one (`openssl s_client ... | openssl x509 -fingerprint -sha256`)
+   before trusting it. Every Proximo command loads `proximo.env` itself, so the
+   MCP client entry needs no `env` block.
 
 4. **Prove the boundary before any model sees it:** `proximo doctor`. Expect
-   `"reachable": true`, empty `flags`, and a `cannot` list that includes
-   storage definition, firewall and node configuration, tokens/ACLs and users.
+   the `pve` plane reached, `"arm": {"armed": false, "enforced": true}`, and
+   `"chain": "ok"` on the ledger.
 
 5. **Register it.** Claude Code: `claude mcp add --scope user proximo -- <path-to>/proximo`.
    Tools appear only in a NEW session.
 
-Optional hardening Proximo offers but leaves off: `PROXIMO_CONSENT_DIR`
-(approval files only the user can write), `PROXIMO_CONTAIN_TRIP_PATH` (kill
-switch), an off-box audit anchor, and `PROXIMO_TOOLS_PIN` (refuse to start if
-the tool surface changed). `proximo doctor` says how to turn each on.
+6. **Arming is the user's act.** The agent works disarmed (read-only). When a
+   change is needed, the user runs `proximo arm`, and `proximo disarm` after.
+   A call made while disarmed is refused with `"needs": "arm"`.
+
+Optional hardening Proximo leaves off: `PROXIMO_CONSENT_DIR` (single-use
+approval files only the user can write), `PROXIMO_CONTAIN_TRIP_PATH` (kill
+switch) and `PROXIMO_RATE_MAX` (mutations per window). `proximo doctor` names
+each one it finds unset.
 
 ## Calling tools
 
-The default door serves 7 tools. Find others with `proximo_find_tools`, read
-their arguments with `proximo_tool_schema`, run read-only ones with
-`proximo_read` and mutations with `proximo_call` (`{"tool": ..., "arguments": {...}}`).
-
-| Workflow | Proximo tool |
+| Tool | Use |
 |---|---|
-| Boundary check | `pve_doctor` |
-| What exists | `pve_list_guests`, `pve_guest_status`, `pve_guest_config_get` |
-| Clone a template | `pve_clone` (`kind=qemu`, `pool=agent`) |
-| Power | `pve_guest_power` (`action=start/stop/shutdown/reboot`) |
-| Cloud-init | `pve_cloudinit_get`, `pve_cloudinit_set` |
-| Snapshot / undo | `pve_snapshot_create`, `pve_snapshot_list`, `pve_rollback` |
-| Backup / restore | `pve_backup`, `pve_backup_list`, `pve_restore`, `pve_backup_delete` |
-| Delete a guest | `pve_delete_guest` (`purge=true`) |
-| Wait for a task | `pve_task_wait`, `pve_task_status` |
-| Prove the record | `audit_verify`, `audit_entries` |
+| `proximo_find` | Plain words to an API path ("clone vm", "guest status") |
+| `proximo_plan` | What a call would do and the path's published parameters. Changes nothing |
+| `proximo_read` | Any GET. `fields=all` for full rows |
+| `proximo_call` | Any POST/PUT/DELETE. Plans only unless `confirm=true`; then runs armed and waits on the task. `method=undo` restores a captured record |
+| `audit_entries`, `audit_verify` | Read and check the ledger |
 
-## Measured behaviour and gotchas
+API parameters go in `params` on `proximo_read` but in `args` on
+`proximo_plan` and `proximo_call`; a wrong name is refused, not ignored.
+Measured over MCP: a `proximo_call` without `confirm` returned
+`"status": "plan"` and created nothing; with `confirm=true` a clone, backup,
+`unique=1` restore, backup delete and two guest deletes each returned
+`exitstatus: OK`, and `audit_verify` returned `ok`.
 
-- **Plan, then confirm.** Without `confirm=true` a mutation returns
-  `"status": "plan"` and changes nothing. The delete plan was marked high risk,
-  listed the disk and snapshot it would remove, and predicted that PVE would
-  refuse because the guest was running.
+Common paths (node name is case-sensitive):
+
+| Workflow | Method and path |
+|---|---|
+| What exists | `GET /cluster/resources` (`type=vm`) |
+| Clone a template | `POST /nodes/<node>/qemu/<template>/clone` (`newid`, `name`, `pool=agent`) |
+| Power | `POST /nodes/<node>/qemu/<vmid>/status/start` (or `stop`, `shutdown`, `reboot`) |
+| Snapshot | `POST /nodes/<node>/qemu/<vmid>/snapshot` (`snapname`) |
+| Back up | `POST /nodes/<node>/vzdump` (`vmid`, `storage`, `mode=snapshot`, `compress=zstd`) |
+| List backups | `GET /nodes/<node>/storage/<storage>/content` (`content=backup`) |
+| Restore | `POST /nodes/<node>/qemu` (`vmid`, `archive`, `pool=agent`, `storage`, **`unique=1`**) |
+| Delete a backup | `DELETE /nodes/<node>/storage/<storage>/content/<volid with / as %2F>` |
+| Delete a guest | `DELETE /nodes/<node>/qemu/<vmid>` (`purge=1`) |
+
+The same engine runs from a shell: `proximo-core pve GET /cluster/resources`.
+**Unlike the MCP tool, `proximo-core` runs a mutation as soon as you call it.**
+Add `--plan` to preview. An agent with a shell should use `--plan` first, every
+time.
+
+## Gotchas (measured)
+
+- **Restore copies the original's identity unless you pass `unique=1`.** A
+  QEMU restore without it came back with the original's MAC address and SMBIOS
+  UUID; with `unique=1` both were new. The restore plan does not warn. Even
+  with `unique=1` the disk is copied as-is, including `/etc/machine-id`, so a
+  copy started next to its original can still get the original's DHCP lease.
+  For a test restore, also set `link_down=1` on the NIC (SKILL.md, *Backups*).
+  (Proximo 0.44.2 fixed this in its old `pve_restore` tool; that tool was
+  removed in 0.45.0.)
+- **`proximo mint pve --write` cannot clone a template.** Its token holds only
+  `PVEVMAdmin` on the pool; a clone of a template outside the pool returned
+  `403 Permission check failed (/vms/<template>, VM.Clone)`. Cloning also needs
+  disk space on the target storage and `SDN.Use` on the bridge.
+  `templates/proximo-token-setup.sh` grants all three.
+- **A narrower grant on the user hides the pool from the read token.** With
+  `PVEVMAdmin` on `/pool/agent` for the user, the read token's rights there are
+  the intersection, and `GET /pools/agent` returned
+  `403 ... (/pool/agent, Pool.Audit)`. The setup script also gives the user
+  `PVEAuditor` on each narrower path.
 - **The pool fence holds.** Cloning into `pool=agent` worked; cloning without
-  a pool returned HTTP 403, so the token cannot create guests outside it.
-- **"submitted" is not "done".** A stop sent while a snapshot was still running
-  failed with `VM is locked (snapshot)`. Call `pve_task_wait` on every UPID
-  before the next mutation.
-- **`kind` defaults to `lxc`.** Cloning a QEMU template without `kind=qemu`
-  produced a plan for "lxc/9002" (a guest that does not exist) that still said
-  `"complete": true`. Always pass `kind`.
-- **QEMU restore cannot make a safe copy (0.44.1).** `pve_restore` sends no
-  `unique` and no `storage` for QEMU. A restored copy had the original's MAC
-  and SMBIOS UUID, so starting both would put two identical machines on the
-  network. Do not start such a copy next to its original. For a safe test
-  restore, use the API directly with `unique=1` and `link_down=1` (see
-  SKILL.md, *Backups*).
-- **Delete backups before their guest.** With a pool-scoped token, deleting a
-  backup after its guest was destroyed returned HTTP 403 (the backup no longer
-  belongs to anything in the pool). Deleting the backup first worked.
-- **Existence checks outside the pool read "unknown".** A restore plan for a
-  free VMID said it could not confirm whether the target exists, because the
-  token cannot see IDs outside its pool. That is honest, not a fault.
-- **Guest firewall plans (not measured through Proximo; read in its 0.44.1
-  source):** the enable plan does not mention that nothing is enforced while
-  the datacenter switch is off, or that a NIC needs `firewall=1`. Check both
-  yourself (SKILL.md, *Firewall*).
+  a pool returned HTTP 403.
+- **Proximo waits on tasks now.** `proximo_call` with `confirm=true` (and
+  `proximo-core`, 60 s by default, `--wait` up to 600) returns only after the
+  task ends, with `exitstatus`. Check `timed_out`: a task that outlives the
+  wait is still running.
+- **Delete backups before their guest.** Once the guest was destroyed, the
+  write token could no longer see its backup at all (an empty listing), and a
+  delete was refused because Proximo could not read the record first. Only
+  root could remove it.
+- **A volume id goes in the path with `/` as `%2F`**
+  (`shared:backup%2Fvzdump-...`); a literal `/` is refused as an unknown path.
+- **Deleting the token user leaves ACL lines behind.** `pveum user delete`
+  with tokens still present left their ACL lines in `/etc/pve/user.cfg` (PVE
+  logs `ignore invalid acl token`). Remove the tokens first, then the user.

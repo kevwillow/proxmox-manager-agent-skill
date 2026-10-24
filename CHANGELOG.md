@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.5.0 (2026-10-23)
+
+Measured on PVE 9.2.2 with Proximo 0.46.2.
+
+Changed:
+- `references/mcp-servers.md`: rewritten for Proximo 0.45+ (six tools over
+  raw API paths, read/write token pair with `proximo arm`/`disarm`); common
+  work as API paths; `proximo-core` runs a mutation without `--plan`.
+- `templates/proximo-token-setup.sh`: mints `proximo@pve!read` and
+  `proximo@pve!write`; gives the user `PVEAuditor` on each narrower path so
+  the read token keeps `Pool.Audit`; optional write-token expiry; undo removes
+  the tokens before the user.
+- SKILL.md: plan every change, pass `unique=1` on every restore, work
+  disarmed.
+
+Measured:
+- A raw-API restore without `unique=1` keeps the original's MAC and SMBIOS
+  UUID; with it both are new.
+- `proximo mint pve --write`'s token cannot clone a template (403 `VM.Clone`).
+- `pveum user delete` with tokens present leaves their ACL lines in
+  `/etc/pve/user.cfg`; removing the tokens first leaves none.
+- After its guest is destroyed, a backup is invisible to the pool token.
+
+Removed: the 0.44 tool map and the `kind` and guest-firewall notes (those
+tools no longer exist).
+
 ## 1.4.0 (2026-10-08)
 
 Measured on PVE 9.2.2 through Proximo 0.44.1 over the MCP protocol.
