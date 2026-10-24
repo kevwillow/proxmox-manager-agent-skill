@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.5.1 (2026-10-23)
+
+From a cross-model review (codex, Gemini) of 1.5.0, each finding checked
+before it was acted on; the script changes were re-run on PVE 9.2.2.
+
+- `templates/proximo-token-setup.sh`: the write token also gets `PVEAuditor`
+  on its narrower paths (it lacked `Pool.Audit` there, measured); refuses an
+  existing `privsep=0` token; rejects a non-integer expiry instead of minting
+  a token that never expires; allows an empty template list; lists what is
+  already in pool `agent`; says how to re-mint an existing token.
+- `unique=1` is for a restore that makes a copy, not for rebuilding a lost
+  guest in place.
+- The read token does not see backup archives; an empty listing while
+  disarmed proves nothing.
+- Planning works disarmed; only a confirmed call needs `proximo arm`.
+- Removed `PROXIMO_NODE` from the example config: Proximo 0.45+ never reads it.
+
 ## 1.5.0 (2026-10-23)
 
 Measured on PVE 9.2.2 with Proximo 0.46.2.
@@ -9,11 +26,13 @@ Changed:
   raw API paths, read/write token pair with `proximo arm`/`disarm`); common
   work as API paths; `proximo-core` runs a mutation without `--plan`.
 - `templates/proximo-token-setup.sh`: mints `proximo@pve!read` and
-  `proximo@pve!write`; gives the user `PVEAuditor` on each narrower path so
-  the read token keeps `Pool.Audit`; optional write-token expiry; undo removes
-  the tokens before the user.
-- SKILL.md: plan every change, pass `unique=1` on every restore, work
-  disarmed.
+  `proximo@pve!write`; gives the user and the write token `PVEAuditor` on each
+  narrower path so both keep `Pool.Audit`; refuses an existing `privsep=0`
+  token; validates the expiry; allows an empty template list; re-runs cleanly;
+  lists what is already in pool `agent`; undo removes the tokens before the
+  user.
+- SKILL.md: plan every change, pass `unique=1` on a restore that makes a copy,
+  work disarmed.
 
 Measured:
 - A raw-API restore without `unique=1` keeps the original's MAC and SMBIOS

@@ -43,13 +43,14 @@ Proximo with a read-only token and a pool-scoped write token
   tools that take a raw API path: new setup, the API paths for common work,
   and every gotcha re-measured on PVE 9.2.2 with Proximo 0.46.2.
 - A restore through the raw API keeps the original's MAC address and SMBIOS
-  UUID unless the call passes `unique=1`. The skill now says so wherever it
-  restores.
+  UUID unless the call passes `unique=1`. The skill now says when to pass it
+  (a copy) and when not to (rebuilding a lost guest in place).
 - `templates/proximo-token-setup.sh` makes the read/write token pair that
   `proximo arm` and `proximo disarm` swap between. It grants what a clone from
   a template needs (Proximo's own `mint --write` recipe gets 403 on
-  `VM.Clone`), keeps the read token able to see the pool, and its undo steps
-  remove the tokens before the user so no ACL lines are left behind.
+  `VM.Clone`), keeps both tokens able to see their pools, refuses a
+  `privsep=0` token, re-runs cleanly, and its undo steps remove the tokens
+  before the user so no ACL lines are left behind.
 
 ## What was new in 1.4.0
 

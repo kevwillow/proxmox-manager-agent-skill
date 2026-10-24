@@ -23,7 +23,7 @@ notes written for 0.44 do not apply to it.
 
 Both were active in October 2026. Proximo was chosen here for its plan-first
 design, its read/write token split and its coverage. It has one maintainer and
-changes fast (0.44 to 0.46 in two weeks, with breaking changes): pin a version
+changes fast (0.44.1 to 0.46.2 in under three weeks, with breaking changes): pin a version
 and re-check this file after upgrading. Report defects upstream as issues; its
 CONTRIBUTING asks for an issue before anything non-trivial.
 
@@ -59,7 +59,6 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    install -m 600 ~/.config/proximo/pve-read.token ~/.config/proximo/pve.served
    cat > ~/.config/proximo/proximo.env <<'EOF'
    PROXIMO_API_BASE_URL=https://<host>:8006/api2/json
-   PROXIMO_NODE=<node>
    PROXIMO_TOKEN_PATH=<home>/.config/proximo/pve.served
    PROXIMO_READONLY_SOURCE=<home>/.config/proximo/pve-read.token
    PROXIMO_ARM_SOURCE=<home>/.config/proximo/pve-write.token
@@ -83,7 +82,8 @@ CONTRIBUTING asks for an issue before anything non-trivial.
 
 6. **Arming is the user's act.** The agent works disarmed (read-only). When a
    change is needed, the user runs `proximo arm`, and `proximo disarm` after.
-   A call made while disarmed is refused with `"needs": "arm"`.
+   Planning works disarmed (the plan says `"allowed": false, "needs": "arm"`);
+   a `confirm=true` call is refused until the user arms.
 
 Optional hardening Proximo leaves off: `PROXIMO_CONSENT_DIR` (single-use
 approval files only the user can write), `PROXIMO_CONTAIN_TRIP_PATH` (kill
@@ -117,7 +117,7 @@ Common paths (node name is case-sensitive):
 | Snapshot | `POST /nodes/<node>/qemu/<vmid>/snapshot` (`snapname`) |
 | Back up | `POST /nodes/<node>/vzdump` (`vmid`, `storage`, `mode=snapshot`, `compress=zstd`) |
 | List backups | `GET /nodes/<node>/storage/<storage>/content` (`content=backup`) |
-| Restore | `POST /nodes/<node>/qemu` (`vmid`, `archive`, `pool=agent`, `storage`, **`unique=1`**) |
+| Restore | `POST /nodes/<node>/qemu` (`vmid`, `archive`, `pool=agent`, `storage`, **`unique=1`** for a copy) |
 | Delete a backup | `DELETE /nodes/<node>/storage/<storage>/content/<volid with / as %2F>` |
 | Delete a guest | `DELETE /nodes/<node>/qemu/<vmid>` (`purge=1`) |
 
@@ -130,22 +130,33 @@ time.
 
 - **Restore copies the original's identity unless you pass `unique=1`.** A
   QEMU restore without it came back with the original's MAC address and SMBIOS
-  UUID; with `unique=1` both were new. The restore plan does not warn. Even
+  UUID; with `unique=1` both were new. The restore plan does not warn. Use it
+  for any copy that may run beside its original; leave it off only to rebuild a
+  lost guest in place, where the old MAC (DHCP reservations, licences) is
+  wanted. Even
   with `unique=1` the disk is copied as-is, including `/etc/machine-id`, so a
   copy started next to its original can still get the original's DHCP lease.
   For a test restore, also set `link_down=1` on the NIC (SKILL.md, *Backups*).
   (Proximo 0.44.2 fixed this in its old `pve_restore` tool; that tool was
   removed in 0.45.0.)
-- **`proximo mint pve --write` cannot clone a template.** Its token holds only
-  `PVEVMAdmin` on the pool; a clone of a template outside the pool returned
+- **The read token does not see backups.** PVE lists a backup archive only to a
+  token holding `VM.Backup` on its guest (or `Datastore.Allocate` on the
+  storage); `PVEAuditor` gets an empty list (Proximo's SETUP.md, *Seeing
+  backups*). An empty listing while disarmed does not mean there are no
+  backups.
+- **`proximo mint pve --write` cannot clone a template kept outside the pool.**
+  Its token holds only `PVEVMAdmin` on the pool; a clone of a template outside the pool returned
   `403 Permission check failed (/vms/<template>, VM.Clone)`. Cloning also needs
   disk space on the target storage and `SDN.Use` on the bridge.
   `templates/proximo-token-setup.sh` grants all three.
-- **A narrower grant on the user hides the pool from the read token.** With
-  `PVEVMAdmin` on `/pool/agent` for the user, the read token's rights there are
-  the intersection, and `GET /pools/agent` returned
-  `403 ... (/pool/agent, Pool.Audit)`. The setup script also gives the user
-  `PVEAuditor` on each narrower path.
+- **A narrower grant hides the pool from both tokens.** A grant on a deeper
+  path replaces the inherited one for that principal. With `PVEVMAdmin` on
+  `/pool/agent` for the user, the read token's rights there (an intersection
+  with the user) shrank to `VM.Audit` and `VM.GuestAgent.Audit`, and
+  `GET /pools/agent` returned `403 ... (/pool/agent, Pool.Audit)`. The write
+  token, holding `PVEVMAdmin` there itself, lacked `Pool.Audit` too. The setup
+  script also gives the user and the write token `PVEAuditor` on each narrower
+  path, which adds audit rights only.
 - **The pool fence holds.** Cloning into `pool=agent` worked; cloning without
   a pool returned HTTP 403.
 - **Proximo waits on tasks now.** `proximo_call` with `confirm=true` (and

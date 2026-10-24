@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through the PVE API (admin or pool-scoped token) plus root SSH, a scoped SSH user, or alongside a Proxmox MCP server such as Proximo. Covers VM and LXC lifecycle, cloud-init templates and fast clones, ISO and storage management, backup/restore, network bridges with a dead-man revert timer, firewall, cluster operations, and PVE 9.x gotchas. Includes tested API helpers, a least-privilege token recipe, and a sudoers allowlist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'make a template', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.5.0
+version: 1.5.1
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -48,8 +48,10 @@ what order, with what pitfall-avoidance.
 If the session has a Proxmox MCP server connected (for example Proximo), use
 its tools for API work instead of hand-written `curl`, and keep following this
 skill: the rules above, the pitfalls below, and the pool-scoped token. Plan
-every change before running it, and pass `unique=1` on every restore: without
-it the copy keeps the original's MAC address and SMBIOS UUID. With Proximo,
+every change before running it. Pass `unique=1` when a restored copy may run
+beside its original (any restore to a new VMID): without it the copy keeps the
+original's MAC address and SMBIOS UUID. Leave it off only to rebuild a lost
+guest in place, where the old identity is wanted. With Proximo,
 work disarmed and let the user run `proximo arm` when a change is needed.
 Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
 
