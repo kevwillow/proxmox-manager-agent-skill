@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.5.2 (2026-10-24)
+
+Re-checked every Proximo note against the Proximo 0.46.2 source (still the
+newest release).
+
+- The read-token backup gotcha and the setup script's header now name both
+  rights PVE wants before it lists a backup: `Datastore.AllocateSpace` on the
+  storage and `VM.Backup` on the guest (Proximo's SETUP.md, *Seeing backups*).
+
 ## 1.5.1 (2026-10-23)
 
 From a cross-model review (codex, Gemini) of 1.5.0, each finding checked

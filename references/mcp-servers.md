@@ -140,8 +140,8 @@ time.
   (Proximo 0.44.2 fixed this in its old `pve_restore` tool; that tool was
   removed in 0.45.0.)
 - **The read token does not see backups.** PVE lists a backup archive only to a
-  token holding `VM.Backup` on its guest (or `Datastore.Allocate` on the
-  storage); `PVEAuditor` gets an empty list (Proximo's SETUP.md, *Seeing
+  token holding `Datastore.AllocateSpace` on the storage and `VM.Backup` on
+  its guest (or `Datastore.Allocate` on the storage); `PVEAuditor` gets an empty list (Proximo's SETUP.md, *Seeing
   backups*). An empty listing while disarmed does not mean there are no
   backups.
 - **`proximo mint pve --write` cannot clone a template kept outside the pool.**

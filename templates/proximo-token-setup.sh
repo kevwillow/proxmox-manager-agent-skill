@@ -7,7 +7,8 @@
 # It makes two privsep tokens on user proximo@pve, the pair Proximo's
 # `proximo arm` / `proximo disarm` swap between:
 #   proximo@pve!read    PVEAuditor on /: audit everything, change nothing (it does NOT
-#                       see backup archives: PVE lists them only to VM.Backup holders)
+#                       see backup archives: PVE lists them only to a holder of
+#                       Datastore.AllocateSpace on the storage and VM.Backup on the guest)
 #   proximo@pve!write   the grants below, each also given to the user
 #                       (a privsep token's rights are the intersection of both)
 #     /                                     PVEAuditor        audit everything
