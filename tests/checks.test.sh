@@ -414,7 +414,7 @@ check "unplug: failed unmount is non-zero" "$(nonzero $rc)" yes
 fresh
 stub curl 'echo "{\"data\":null}"; case " $* " in *" --fail-with-body "*) exit 22;; esac; exit 0'
 stub openssl 'echo key'
-doc SKILL.md 'access/ticket' 'H=h; PWFILE=f'; rc=$?
+doc SKILL.md 'access/ticket' "cd '$T'; H=h; PWFILE=f"; rc=$?
 check "bootstrap: refused ticket is non-zero" "$(nonzero $rc)" yes
 
 for s in proxmox-status cluster-info; do
@@ -471,7 +471,7 @@ check "sudoers: a long rule list does not fail the install" "$rc" 0
 fresh
 stub openssl 'cat >/dev/null 2>&1; case "$1" in x509) exit 1;; esac; echo fromempty'
 stub curl 'echo curl >>"$LOG"'
-doc SKILL.md 'access/ticket' 'H=h; PWFILE=f'
+doc SKILL.md 'access/ticket' "cd '$T'; H=h; PWFILE=f"
 check "bootstrap: no certificate, no pin, no password sent" "$(logged '^curl')" 0
 
 fresh
@@ -548,7 +548,7 @@ check "bootstrap: a failed save keeps the old token" "$(cat "$T/.config/pve/X.to
 fresh
 stub openssl 'cat >/dev/null 2>&1; case "$1" in pkey) exit 1;; esac; echo key'
 stub curl 'echo curl >>"$LOG"'
-doc SKILL.md 'access/ticket' 'H=h; PWFILE=f'
+doc SKILL.md 'access/ticket' "cd '$T'; H=h; PWFILE=f"
 check "bootstrap: unconvertible key, no pin, no password sent" "$(logged '^curl')" 0
 
 fresh
@@ -561,6 +561,11 @@ check "fstab: an existing entry for that path is refused" "$(nonzero $rc) $(logg
 
 check "readme: installers are not staged in shared /tmp" "$(grep -c 'root@<proxmox-host>:/tmp/\|:/etc/ssh/sshd_config.d/' "$R/README.md")" 0
 check "runbooks: both are listed" "$(grep -c 'runbooks/snapshot_change.md' "$R/SKILL.md" | head -1)" 2
+
+check "network: run id is unique within a second" "$(block SKILL.md 'net-revert' | grep -c 'run=$(date +%s)-')" 1
+check "network: a running revert is not 'disarmed'" "$(block SKILL.md 'net-revert' | grep -c 'is-active net-revert')" 1
+check "runbook: the copy's identity is re-read before delete" "$(grep -c "Re-read step 4's" "$R/runbooks/restore_test.md")" 1
+check "runbook: snapshot name is unique" "$(grep -c 'unique new' "$R/runbooks/snapshot_change.md")" 1
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
 exit $fail

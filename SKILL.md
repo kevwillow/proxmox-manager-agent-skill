@@ -941,7 +941,7 @@ verify from the agent's side, and only then disarm. Mode A, root SSH:
 # 2. Stage and apply through the API (staged changes go to /etc/network/interfaces.new).
 # 3. Verify over the SAME path the agent uses, then disarm.
 #    jq -es, not -e: jq 1.6 exits 0 for -e on empty input.
-run=$(date +%s) &&
+run=$(date +%s)-$$-$RANDOM &&
 ssh root@<host> 'test ! -e /etc/network/interfaces.new || { echo "pending changes exist"; exit 1; }' &&
 ssh root@<host> "cp -a /etc/network/interfaces /root/interfaces.pre-agent-$run &&
   systemd-run --unit=net-revert-$run --on-active=120 --timer-property=AccuracySec=1s \
@@ -951,7 +951,8 @@ pve_task PUT /nodes/<node>/network &&
 ssh -o ConnectTimeout=5 root@<host> true &&
   reply=$(pve_api GET /nodes/<node>/network/vmbr10) &&
   jq -es 'length == 1 and .[0].data.active == 1' >/dev/null <<<"$reply" &&
-  ssh root@<host> "systemctl stop net-revert-$run.timer && test ! -e /root/net-reverted-$run" &&
+  ssh root@<host> "systemctl stop net-revert-$run.timer &&
+    [ \"\$(systemctl is-active net-revert-$run.service)\" = inactive ] && test ! -e /root/net-reverted-$run" &&
   echo "applied, verified, revert disarmed"
 ```
 

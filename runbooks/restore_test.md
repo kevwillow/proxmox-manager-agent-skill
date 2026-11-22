@@ -10,6 +10,6 @@ Never write to the original: before each write, check the id is step 2's. Show e
 4. GET /nodes/{node}/qemu/{vmid}/pending with fields=key (capped config reads drop keys). Stop if failed, empty, cut, or it has hostpci, usb, virtiofs, parallel, args or hookscript. GET /nodes/{node}/qemu/{vmid}/config with fields naming every netN and serialN. Stop if failed, cut, any is missing, or a serial isn't socket. PUT /nodes/{node}/qemu/{vmid}/config with onboot=0, protection=0 and each netN's own value with link_down=1, replacing any link_down. Read those plus both flags back, same stops: start only if each netN has link_down=1 and both flags are 0.
 5. POST /nodes/{node}/qemu/{vmid}/status/start, then GET /nodes/{node}/qemu/{vmid}/agent/get-host-name for up to five minutes. No hostname: report boot not proven, skip to 7.
 6. GET /nodes/{node}/qemu/{vmid}/agent/file-read with that file; compare exactly. Failed, empty or cut: report boot proven, data not.
-7. Check the id again, POST /nodes/{node}/qemu/{vmid}/status/stop, then on a separate yes DELETE /nodes/{node}/qemu/{vmid} with purge=1. Keep the backup.
+7. Re-read step 4's fields: stop unless unchanged. POST /nodes/{node}/qemu/{vmid}/status/stop, on a separate yes re-read, then DELETE /nodes/{node}/qemu/{vmid} with purge=1. Keep the backup.
 
-Report volid, file compared, result and whether the copy is gone. The operator closes the agent lane.
+Report volid, file compared, result, copy gone or not. The operator closes the agent lane.
