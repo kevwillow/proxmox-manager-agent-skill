@@ -4,8 +4,9 @@
 # PVE API token). Edit the settings below, then run ONCE on the Proxmox host as root:
 #   bash proximo-token-setup.sh
 #
-# It makes two privsep tokens on user proximo@pve, the pair Proximo's
-# `proximo arm` / `proximo disarm` swap between:
+# It makes two privsep tokens on user proximo@pve: the read token Proximo serves
+# when disarmed, and the write token for a job served by configuration. (Since
+# 0.52 a person arms with a login, `proximo-core arm`, not with this token.)
 #   proximo@pve!read    PVEAuditor on /: audit everything, change nothing (it does NOT
 #                       see backup archives: PVE lists them only to a holder of
 #                       Datastore.AllocateSpace on the storage and VM.Backup on the guest)

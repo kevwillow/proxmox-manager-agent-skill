@@ -85,7 +85,9 @@ Bootstrap this mode as follows:
    self-signed certificate, while `--pinnedpubkey` still enforces the pin.
 
    ```bash
-   PIN=$(echo | openssl s_client -connect $H:8006 2>/dev/null | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64)
+   # No certificate must mean no pin: hashing empty input exits 0 with a valid-looking pin.
+   KEY=$(echo | openssl s_client -connect $H:8006 2>/dev/null | openssl x509 -pubkey -noout) && [ -n "$KEY" ] &&
+   PIN=$(echo "$KEY" | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64) &&
    curl -sS --fail-with-body -k --pinnedpubkey "sha256//$PIN" https://$H:8006/api2/json/access/ticket \
      --data-urlencode 'username=root@pam' --data-urlencode "password@$PWFILE"
    ```
@@ -108,9 +110,9 @@ Bootstrap this mode as follows:
    # The secret is shown once: delete the response only after it is saved.
    T=~/.config/pve/<host>.token
    install -m 600 /dev/null "$T" &&
-     jq -ej '.data | select(.value) | "PVEAPIToken=\(.["full-tokenid"])=\(.value)"' token-response.json > "$T" &&
-     [ -s "$T" ] && rm token-response.json
-   install -m 600 /dev/null ~/.config/pve/<host>.pin
+     jq -ej '.data | select(.value and .["full-tokenid"]) | "PVEAPIToken=\(.["full-tokenid"])=\(.value)"' token-response.json > "$T" &&
+     [ -s "$T" ] && rm token-response.json && [ -n "$PIN" ] &&
+   install -m 600 /dev/null ~/.config/pve/<host>.pin &&
    printf 'sha256//%s' "$PIN" > ~/.config/pve/<host>.pin
    ```
 4. Install the root SSH key without `sshpass`, using OpenSSH askpass. On PVE,
@@ -644,11 +646,11 @@ chained through `pve_task`; the whole chain was tested with stand-ins only.
 #    ciupgrade=0: see the note below. The imported disk is only as big as the
 #    image (about 3.5 GB): grow it before converting, or every clone starts nearly full.
 KEYS=$(cat ~/.ssh/id_ed25519.pub | jq -sRr @uri) && [ -n "$KEYS" ] &&
+pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets &&
 pve_task POST /nodes/<node>/storage/local/download-url \
   --data-urlencode content=import --data-urlencode filename=ubuntu-26.04-server-cloudimg-amd64.qcow2 \
   --data-urlencode url=https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img \
   --data-urlencode checksum=<sha256 from SHA256SUMS> --data-urlencode checksum-algorithm=sha256 &&
-pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets &&
 ssh root@<host> 'mkdir -p /var/lib/vz/snippets; printf "#cloud-config\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n" > /var/lib/vz/snippets/vendor-guest-agent.yaml' &&
 pve_task POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name=ubuntu-2604-tmpl \
   --data-urlencode memory=2048 --data-urlencode cores=2 --data-urlencode cpu=host --data-urlencode ostype=l26 \
@@ -955,9 +957,10 @@ through `pvesh`, never edit `/etc/pve/firewall/*.fw` directly.
 
 ```bash
 # Chained: never switch the firewall on if the allow rule was refused.
+# --enable 1 is required: without it PVE creates the rule switched off and still exits 0.
 # Add a rule to allow SSH from a specific subnet on the host
 sudo -n pvesh create /nodes/<node>/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 \
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 \
     --dest 192.168.50.0/24 --dport 22 --proto tcp &&
 
 # List current rules
@@ -1019,7 +1022,7 @@ depends on what changed:
 | Imported ISO | `ls /var/lib/vz/template/iso/` shows the file, `pvesh get /nodes/.../storage/local/content --content iso` lists it |
 | Created backup | the task ended `OK` and the storage lists the new volid; only the restore test above proves its data |
 | Restored backup | the task ended `OK`, then the restore test above matched known data (`running` proves neither boot nor data) |
-| Edited firewall | `pvesh get /nodes/<node>/firewall/rules` shows the new rule, test from allowed source |
+| Edited firewall | `pvesh get /nodes/<node>/firewall/rules` shows the new rule with `enable` 1, test from allowed source |
 
 **Always verify the *full* state, not just the immediate operation.**
 A common failure mode is the operation succeeding but a downstream effect

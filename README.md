@@ -209,7 +209,7 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
 3. **Create the user and install the sudoers file** (on the Proxmox host as
    root; the script creates `zen-agent` with a locked password):
    ```bash
-   scp templates/zen-agent-sudoers templates/install-sudoers.sh root@<proxmox-host>:/tmp/
+   scp templates/zen-agent-sudoers templates/install-sudoers.sh root@<proxmox-host>:/tmp/ &&
    ssh root@<proxmox-host> 'bash /tmp/install-sudoers.sh'
    ```
 
@@ -228,7 +228,7 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
 
 5. **Install the sshd Match block** (key-only auth, no forwarding):
    ```bash
-   scp templates/99-zen-agent-sshd.conf root@<proxmox-host>:/etc/ssh/sshd_config.d/
+   scp templates/99-zen-agent-sshd.conf root@<proxmox-host>:/etc/ssh/sshd_config.d/ &&
    ssh root@<proxmox-host> 'sshd -t && systemctl reload ssh'
    ```
 

@@ -186,7 +186,7 @@ check "token reference: refused create is non-zero" "$(nonzero $rc)" yes
 fresh
 stub pvesh 'echo "not json"; exit 1'
 doc references/cluster.md '--tags "homelab' ''; rc=$?
-check "cluster tag loop: failed listing is non-zero" "$(nonzero $rc)" yes
+check "cluster tag: refused change is non-zero" "$(nonzero $rc)" yes
 
 fresh
 stub sudo 'exit 1'
@@ -323,9 +323,9 @@ chain() { # FILE MARKER NAME
   for c in $WRITERS; do stub "$c" "echo $c >>\"\$LOG\"; exit 1"; done
   stub pvesm '[ "$1" != add ] || { echo pvesm >>"$LOG"; exit 1; }'
   stub pvesh 'case "$1" in create|set) echo pvesh >>"$LOG"; exit 1;; esac'
-  stub findmnt 'exit 1'; stub mountpoint 'exit 1'; stub find 'exit 1'
+  stub findmnt 'exit 1'; stub mountpoint 'exit 0'; stub find 'exit 1'
   doc "$1" "$2" ''
-  check "chain: $3" "$([[ $(logged .) -le 1 ]] && echo stops || echo "kept going")" stops
+  check "chain: $3" "$([[ $(logged .) == 1 ]] && echo stops || echo "writes: $(logged .)")" stops
 }
 chain SKILL.md 'mount /dev/sdX1' "ISO copy after a failed mount"
 chain SKILL.md 'mount /dev/nvmeXnYp1 /mnt/' "manual mount"
@@ -422,6 +422,40 @@ stub sudo 'case "$*" in *" -l") for i in $(seq 35); do echo rule; /bin/sleep 0.0
 sed "s#$T/sudoers#$T/sudoers-long#g" "$T/sudoers.sh" >"$T/long.sh"   # its own destination file
 run "$T/long.sh"; rc=$?
 check "sudoers: a long rule list does not fail the install" "$rc" 0
+
+fresh
+stub openssl 'cat >/dev/null 2>&1; case "$1" in x509) exit 1;; esac; echo fromempty'
+stub curl 'echo curl >>"$LOG"'
+doc SKILL.md 'access/ticket' 'H=h; PWFILE=f'
+check "bootstrap: no certificate, no pin, no password sent" "$(logged '^curl')" 0
+
+fresh
+stub install ': >"${@: -1}"'; stub jq 'exit 1'
+doc SKILL.md 'rm token-response.json' "cd '$T'; PIN=x"; rc=$?
+check "bootstrap: unsaved token is non-zero" "$(nonzero $rc)" yes
+fresh
+stub install ': >"${@: -1}"'
+echo '{"data":{"full-tokenid":"a@pve!t","value":"s"}}' >"$T/token-response.json"
+doc SKILL.md 'rm token-response.json' "cd '$T'; PIN="; rc=$?
+check "bootstrap: empty pin is non-zero" "$(nonzero $rc)" yes
+
+fresh
+stub scp 'exit 1'; stub ssh 'echo ssh >>"$LOG"'
+doc README.md 'sshd -t && systemctl reload ssh' ''
+check "sshd step: failed copy reloads nothing" "$(logged '^ssh')" 0
+fresh
+stub scp 'exit 1'; stub ssh 'echo ssh >>"$LOG"'
+doc README.md 'bash /tmp/install-sudoers.sh' ''
+check "sudoers step: failed copy runs nothing" "$(logged '^ssh')" 0
+
+# PVE creates a rule disabled unless told otherwise (measured).
+n=$(cat "$R/SKILL.md" "$R"/references/*.md | awk '{ while (sub(/\\$/, "")) { getline next_line; $0 = $0 next_line } print }' |
+  grep -E 'pvesh create [^ ]*firewall/(rules|groups/[^ ]+/rules)' | grep -vc -- '--enable 1')
+check "firewall: every rule a recipe creates is enabled" "$n" 0
+
+dl=$(grep -n 'storage/local/download-url' "$R/SKILL.md" | cut -d: -f1)
+put=$(grep -n 'content=vztmpl,iso,import' "$R/SKILL.md" | cut -d: -f1)
+check "template: import is enabled before the download" "$((put < dl))" 1
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
 exit $fail

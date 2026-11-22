@@ -38,7 +38,7 @@ sudo -n pvesh get /nodes/<node>/qemu/<vmid>/firewall/rules
 
 # Add a rule (cluster level)
 sudo -n pvesh create /cluster/firewall/rules \
-    --action ACCEPT \
+    --action ACCEPT --enable 1 \
     --type in \
     --source 192.168.50.0/24 \
     --dest 192.168.50.0/24 \
@@ -48,7 +48,7 @@ sudo -n pvesh create /cluster/firewall/rules \
 
 # Add a rule (VM level)
 sudo -n pvesh create /nodes/<node>/qemu/<vmid>/firewall/rules \
-    --action ACCEPT \
+    --action ACCEPT --enable 1 \
     --type in \
     --source 192.168.50.0/24 \
     --dport 80 \
@@ -115,9 +115,9 @@ sudo -n pvesh create /cluster/firewall/groups \
 
 # Add rules to the group
 sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
 sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
 
 # Attach to a VM
 sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
@@ -131,11 +131,11 @@ sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
 ```bash
 # Allow Tailscale CGNAT to everything
 sudo -n pvesh create /cluster/firewall/rules \
-    --action ACCEPT --type in --source 100.64.0.0/10 --comment "Tailscale" &&
+    --action ACCEPT --enable 1 --type in --source 100.64.0.0/10 --comment "Tailscale" &&
 
 # Allow LAN SSH
 sudo -n pvesh create /cluster/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 \
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 \
     --dport 22 --proto tcp --comment "LAN SSH"
 ```
 
@@ -143,17 +143,18 @@ sudo -n pvesh create /cluster/firewall/rules \
 
 ```bash
 # Chained: never switch the firewall on if an allow rule was refused.
+# --enable 1 is required: without it PVE creates the rule switched off and still exits 0.
 VMID=100 &&
 
 # LAN HTTP/HTTPS inbound
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
+    --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
 
 # Tailnet SSH (so you can SSH from your phone over tailscale)
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 100.64.0.0/10 --dport 22 --proto tcp &&
+    --action ACCEPT --enable 1 --type in --source 100.64.0.0/10 --dport 22 --proto tcp &&
 
 # Enable firewall for this VM, and on its NIC (keep the MAC from `qm config`)
 sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall/options --enable 1 &&

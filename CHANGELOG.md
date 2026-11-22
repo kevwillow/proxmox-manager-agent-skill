@@ -25,6 +25,10 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
     create never leads to changes on someone else's guest, pool or user, and
     a firewall is never switched on after its allow rule was refused.
   - fstab entries are proven by remounting from them.
+  - **Safety: firewall recipes created their allow rules switched off.** PVE
+    defaults a new rule to `enable 0` and exits 0; every one now says
+    `--enable 1`.
+  - Bootstrap saves no pin made from empty input.
   - The restore test exits 0 only when the data matched.
   - The status scripts show failed reads and exit non-zero; `lxc-from-template`
     checks the container is running; `iso-import` compares bytes; the sudoers
@@ -32,6 +36,7 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
   - An empty guest list is no longer called proof of no guests.
   - The cluster "tag all" loop is gone: it never worked, and fixed it would
     have overwritten every guest's tags.
+- The `proximo arm` notes now describe the ticket login (0.52+).
 - `runbooks/restore_test.md`: the same test as a Proximo operator runbook,
   installed by `install.sh`.
 - Corrected for 0.56.0: `proximo-core` needs `--confirm` to change anything;

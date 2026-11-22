@@ -18,7 +18,7 @@ notes written for 0.44 do not apply to it.
 |---|---|---|
 | Repo | github.com/john-broadway/proximo (AGPL-3.0-or-later) | github.com/RekklesNA/ProxmoxMCP-Plus (MIT) |
 | Before a change | Every mutation can be planned first; the MCP tool only plans unless `confirm=true` | Optional static approval token |
-| Write access | A read token by default; `proximo arm` swaps in a write token, `proximo disarm` swaps it back | One token |
+| Write access | A read token by default; `proximo-core arm` is a login by the user (a two-hour ticket), `proximo-core disarm` serves the read token again | One token |
 | Audit | Keyed, hash-chained ledger; `audit_verify` checks it | Job history in SQLite |
 | Coverage | Every published PVE, PBS, PMG and PDM API path, behind six tools | VM/LXC lifecycle, snapshots, backup/restore, jobs, logs (54 tools on 2026-10-08) |
 | Self-signed PVE certificate | Pins the node certificate (`PROXIMO_CA_BUNDLE`) or fingerprint | TLS on/off only |
@@ -69,8 +69,10 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    EOF
    ```
 
-   `pve.served` is the file Proximo reads; `arm` and `disarm` copy the write
-   or read token into it. Compare the pinned certificate's fingerprint with
+   `pve.served` is the file Proximo reads. Since 0.52 `arm` writes the user's
+   login ticket into it and `disarm` writes the read token back.
+   `PROXIMO_ARM_SOURCE` is for an unattended job that is served the write
+   token by configuration. Compare the pinned certificate's fingerprint with
    the live one (`openssl s_client ... | openssl x509 -fingerprint -sha256`)
    before trusting it. Every Proximo command loads `proximo.env` itself, so the
    MCP client entry needs no `env` block.
@@ -83,7 +85,10 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    Tools appear only in a NEW session.
 
 6. **Arming is the user's act.** The agent works disarmed (read-only). When a
-   change is needed, the user runs `proximo arm`, and `proximo disarm` after.
+   change is needed, the user runs `proximo-core arm --user proximo@pve` in
+   their own terminal, and `proximo-core disarm` after. A ticket carries that
+   login's own rights, so a root login is not limited to the pool; the setup
+   script's user needs a password first (from Proximo's SETUP.md, not run).
    Planning works disarmed (the plan says `"allowed": false, "needs": "arm"`);
    a `confirm=true` call is refused until the user arms.
 
