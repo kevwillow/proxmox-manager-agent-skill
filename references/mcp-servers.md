@@ -38,11 +38,11 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    ```bash
    curl -sS -H 'Accept: application/vnd.pypi.integrity.v1+json' \
      https://pypi.org/integrity/proximo-proxmox/<version>/proximo_proxmox-<version>-py3-none-any.whl/provenance |
-     jq -es 'length == 1 and ([.[0].attestation_bundles[].publisher.repository] | unique) == ["john-broadway/proximo"]' &&
+     jq -es 'length == 1 and ([.[0].attestation_bundles[].publisher | "\(.repository) \(.workflow)"] | unique) == ["john-broadway/proximo release-pypi.yml"]' &&
      uv tool install 'proximo-proxmox==<version>'
    ```
 
-   Expect `john-broadway/proximo release-pypi.yml`.
+   It prints `true` and installs only for `john-broadway/proximo release-pypi.yml`.
 
 2. **Mint the two tokens on the PVE host** (the user runs it as root):
    `templates/proximo-token-setup.sh`. It makes `proximo@pve!read`

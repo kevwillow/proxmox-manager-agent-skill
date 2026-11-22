@@ -44,9 +44,10 @@ qm create 100 \
 After install, switch boot order to disk-only and detach ISO:
 
 ```bash
-# Only if the create above succeeded: otherwise 100 is someone else's guest.
-qm set 100 --boot order=scsi0
-qm set 100 --ide2 none
+# Only on the VM created above: after a refused create, 100 is someone else's guest.
+qm config 100 | grep -qx 'name: ubuntu-server' &&
+  qm set 100 --boot order=scsi0 &&
+  qm set 100 --ide2 none
 ```
 
 ## Debian 12 (Bookworm)
@@ -134,7 +135,8 @@ VirtIO drivers ISO (needed for Windows to see the virtio NIC and
 disk during install), attach a second CD-ROM:
 
 ```bash
-qm set 103 --ide3 iso:iso/virtio-win-0.1.240.iso,media=cdrom
+qm config 103 | grep -qx 'name: windows-11' &&
+  qm set 103 --ide3 iso:iso/virtio-win-0.1.240.iso,media=cdrom
 ```
 
 ## LXC container (Debian 12)
@@ -143,9 +145,10 @@ LXC is faster to provision than a full VM. Requires a Debian template
 on a storage pool with `vztmpl` content type:
 
 ```bash
+# pct create exits 0 when --start fails, so the last line looks.
 # Download template once
-pveam update
-pveam download local debian-12-standard_12.5-1_amd64.tar.zst
+pveam update &&
+pveam download local debian-12-standard_12.5-1_amd64.tar.zst &&
 
 # Create container
 pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
@@ -157,7 +160,8 @@ pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
     --features nesting=1 \
     --unprivileged 1 \
     --password <bcrypt-or-plaintext> \
-    --start 1
+    --start 1 &&
+[ "$(pct status 200)" = "status: running" ]
 ```
 
 The `--password` value, if not a bcrypt hash, must be wrapped in

@@ -15,13 +15,16 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
 - **Safety: `add-nvme-storage.sh` could offer to wipe the boot drive.** It
   compared the typed serial with sysfs, which pads NVMe serials and has none
   for SATA. It also accepted a typo, an empty answer or a partition. All are
-  refused now, as is any disk that is mounted, swap, LVM, ZFS, RAID or LUKS.
+  refused now, and so is any disk that is not blank: the script no longer
+  repurposes used disks, the user clears those by hand.
 - **A failed, empty or cut check no longer reads as success:**
   - `pve_api` returns non-zero on a refused request (curl 7.76+); new
     `pve_task` sends and waits. Checks hold on jq 1.6, where `-e` passes on
     empty input.
-  - The template, clone, create, fstab, removal, provenance, token and
-    network-revert recipes stop at the first failed step.
+  - Recipes with several writes stop at the first failed one, so a refused
+    create never leads to changes on someone else's guest, pool or user, and
+    a firewall is never switched on after its allow rule was refused.
+  - fstab entries are proven by remounting from them.
   - The restore test exits 0 only when the data matched.
   - The status scripts show failed reads and exit non-zero; `lxc-from-template`
     checks the container is running; `iso-import` compares bytes; the sudoers
@@ -214,7 +217,7 @@ Fixed:
 - Add OpenClaw support to `install.sh` (`--agent openclaw`,
   `--openclaw-workspace <path>`). OpenClaw workspace path defaults to
   `~/.openclaw/workspace`; users on the literal Windows-style path
-  (`C:\Users\kev\.openclaw\workspace`) can override with the flag.
+  (`C:\Users\<you>\.openclaw\workspace`) can override with the flag.
 - Update SKILL.md Cross-Agent Compatibility table with OpenClaw notes.
 - Update README.md manual install section with OpenClaw example.
 - Verified OpenClaw picks the skill up via `openclaw skills list`.

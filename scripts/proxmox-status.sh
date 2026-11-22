@@ -9,6 +9,8 @@
 
 set -uo pipefail
 
+SUDO=""
+[[ $EUID -ne 0 ]] && SUDO="sudo -n"
 failed=0
 # A read that fails is unknown, which is not the same as empty.
 show() {
@@ -42,31 +44,31 @@ show lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL
 
 echo
 echo "=== Proxmox version ==="
-show pvesh get /version
+show $SUDO pvesh get /version
 
 echo
 echo "=== Node resources ==="
-show pvesh get "/nodes/$(hostname)/status"
+show $SUDO pvesh get "/nodes/$(hostname)/status"
 
 echo
 echo "=== Storage pools ==="
-show pvesm status
+show $SUDO pvesm status
 
 echo
 echo "=== VMs ==="
-show qm list
+show $SUDO qm list
 
 echo
 echo "=== LXC containers ==="
-show pct list
+show $SUDO pct list
 
 echo
 echo "=== Recent errors in pvedaemon.log (last 20 lines) ==="
-show journalctl -u pvedaemon --no-pager -n 20 -p err
+show $SUDO journalctl -u pvedaemon --no-pager -n 20 -p err
 
 echo
 echo "=== Recent errors in pveproxy.log (last 20 lines) ==="
-show journalctl -u pveproxy --no-pager -n 20 -p err
+show $SUDO journalctl -u pveproxy --no-pager -n 20 -p err
 
 echo
 echo "========================================"

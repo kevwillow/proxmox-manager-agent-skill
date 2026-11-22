@@ -46,7 +46,7 @@ Proximo with a read-only token and a pool-scoped write token
   until that reads back (`pve_isolate_copy` in `scripts/pve-api.sh`).
 - **Safety fix: `add-nvme-storage.sh` could offer to wipe the boot drive.**
   Its serial check failed on padded NVMe serials and on every SATA disk. It
-  now compares what `lsblk` reports and refuses any disk in use.
+  now compares what `lsblk` reports and takes only a blank disk.
 - Failed, empty or cut checks no longer read as success, in the helpers,
   scripts and recipes. `pve_api` now returns non-zero when Proxmox refuses
   (needs curl 7.76+).
@@ -145,21 +145,21 @@ directories into the right place for your agent:
 
 ```bash
 # Example for Hermes
-mkdir -p ~/.hermes/skills/proxmox-manager-agent
-cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/
-cp -r references scripts templates runbooks ~/.hermes/skills/proxmox-manager-agent/
+mkdir -p ~/.hermes/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.hermes/skills/proxmox-manager-agent/ &&
 chmod +x ~/.hermes/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for OpenClaw (note the workspace, not ~/.openclaw/skills/)
-mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent
-cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/
-cp -r references scripts templates runbooks ~/.openclaw/workspace/skills/proxmox-manager-agent/
+mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.openclaw/workspace/skills/proxmox-manager-agent/ &&
 chmod +x ~/.openclaw/workspace/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for Cursor
-mkdir -p ~/.cursor/skills/proxmox-manager-agent
-cp SKILL.md ~/.cursor/skills/proxmox-manager-agent/
-cp -r references scripts templates runbooks ~/.cursor/skills/proxmox-manager-agent/
+mkdir -p ~/.cursor/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.cursor/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.cursor/skills/proxmox-manager-agent/ &&
 chmod +x ~/.cursor/skills/proxmox-manager-agent/scripts/*.sh
 ```
 
@@ -219,9 +219,9 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
    session from the agent host shows it).
    ```bash
    # As root on the Proxmox host; paste the contents of zen-agent-proxmox.pub
-   install -d -m 700 -o zen-agent -g zen-agent /home/zen-agent/.ssh
-   printf 'from="<agent-ip>",restrict,pty %s\n' '<public key line>' > /home/zen-agent/.ssh/authorized_keys
-   chown zen-agent: /home/zen-agent/.ssh/authorized_keys
+   install -d -m 700 -o zen-agent -g zen-agent /home/zen-agent/.ssh &&
+   printf 'from="<agent-ip>",restrict,pty %s\n' '<public key line>' > /home/zen-agent/.ssh/authorized_keys &&
+   chown zen-agent: /home/zen-agent/.ssh/authorized_keys &&
    chmod 600 /home/zen-agent/.ssh/authorized_keys
    ```
    `restrict` turns off forwarding for this key and `pty` keeps a terminal.

@@ -16,12 +16,7 @@
 # Usage (as root on the Proxmox host):
 #   bash proxmox-add-nvme-storage.sh
 #
-# The script prompts for everything it needs. To script a known-good
-# config, set env vars:
-#   TARGET_DRIVE=/dev/nvme2n1
-#   PARTITION_COUNT=2
-#   MOUNT_PREFIX=/mnt/vmdata
-#   PVE_STORAGE_NAMES="vmdata2a vmdata2b"
+# The script prompts for everything it needs, and only takes a blank disk.
 
 set -euo pipefail
 
@@ -52,12 +47,12 @@ echo
 
 # Show candidate drives
 echo "Candidate drives (excluding boot):"
-while IFS= read -r line; do
-    SERIAL=$(echo "$line" | awk '{print $NF}')
-    if [[ "$SERIAL" != "$BOOT_SERIAL" && -n "$SERIAL" ]]; then
-        echo "  $line"
+while IFS= read -r name; do
+    key=$(lsblk -dn -o SERIAL "/dev/$name" | tr -d '[:blank:]') || continue
+    if [[ -n "$key" && "$key" != "$BOOT_KEY" ]]; then
+        echo "  $(lsblk -dn -o NAME,SIZE,MODEL,SERIAL "/dev/$name")"
     fi
-done < <(lsblk -dn -o NAME,SIZE,MODEL,SERIAL | tail -n +2)
+done < <(lsblk -dn -o NAME)
 
 echo
 read -p "Enter the TARGET drive (e.g. /dev/nvme2n1): " TARGET_DRIVE
@@ -84,11 +79,18 @@ if [[ "$TARGET_KEY" == "$BOOT_KEY" ]]; then
     echo "ERROR: That is the BOOT DRIVE. Aborting."
     exit 1
 fi
-# The typed serial can name the wrong disk, so also refuse any disk in use.
+# The typed serial can name the wrong disk, and "in use" cannot be listed in
+# full (btrfs mirrors, Ceph, passthrough, cold backups), so take only a blank
+# disk: not mounted, no partitions or holders, no signature of any kind.
+TARGET_TREE=$(lsblk -nr -o NAME "$TARGET_DRIVE")
 TARGET_USE=$(lsblk -nr -o MOUNTPOINT,FSTYPE "$TARGET_DRIVE")
-if grep -qE '^/|\[SWAP\]|LVM2_member|zfs_member|linux_raid_member|crypto_LUKS' <<<"$TARGET_USE"; then
-    echo "ERROR: $TARGET_DRIVE is mounted, swap, or part of LVM, ZFS, RAID or LUKS. Aborting."
-    echo "If it really is disposable, the user must release it by hand first."
+if ! TARGET_SIGS=$(wipefs --no-act "$TARGET_DRIVE"); then
+    echo "ERROR: cannot read what is on $TARGET_DRIVE. Aborting."
+    exit 1
+fi
+if [[ $(wc -l <<<"$TARGET_TREE") -ne 1 || -n "$TARGET_SIGS" || "$TARGET_USE" =~ [^[:space:]] ]]; then
+    echo "ERROR: $TARGET_DRIVE is not blank (partitions, data or in use). Aborting."
+    echo "This script only sets up blank disks. If this one is disposable, the user must clear it by hand first."
     exit 1
 fi
 read -p "Confirm wipe of $TARGET_DRIVE? [yes/NO] " CONFIRM
@@ -179,38 +181,45 @@ read -r
 # --- Step 5: fstab with UUID ---
 echo
 echo "=== Step 5: Writing /etc/fstab entries (UUID-based) ==="
+on_dir() { [[ "$(findmnt -n -o UUID --mountpoint "$1")" == "$2" ]]; }
+UUIDS=()
+for i in $(seq 1 "$PARTITION_COUNT"); do
+    PART="${TARGET_DRIVE}p${i}"
+    if ! UUID=$(blkid -s UUID -o value "$PART") || [[ -z "$UUID" ]] || ! on_dir "${MOUNT_PREFIX}${i}" "$UUID"; then
+        echo "ERROR: $PART is not formatted and mounted on ${MOUNT_PREFIX}${i}. /etc/fstab is unchanged."
+        exit 1
+    fi
+    UUIDS+=("$UUID")
+done
 FSTAB_BAK="/etc/fstab.bak.$(date +%Y%m%d-%H%M%S)"
 cp /etc/fstab "$FSTAB_BAK"
 echo "Backed up to $FSTAB_BAK"
 
 for i in $(seq 1 "$PARTITION_COUNT"); do
-    PART="${TARGET_DRIVE}p${i}"
-    LABEL="${PVE_STORAGE_NAMES[$((i-1))]}"
-    UUID=$(blkid -s UUID -o value "$PART")
+    UUID=${UUIDS[$((i-1))]}
     MOUNT_DIR="${MOUNT_PREFIX}${i}"
     echo "UUID=$UUID $MOUNT_DIR ext4 defaults,nofail 0 2" >> /etc/fstab
-    echo "  Added: UUID=$UUID -> $MOUNT_DIR (label=$LABEL)"
+    echo "  Added: UUID=$UUID -> $MOUNT_DIR (label=${PVE_STORAGE_NAMES[$((i-1))]})"
 done
 
 echo
-echo "Validating with mount -a..."
-# mount -a exits 0 when a nofail device is missing, so check each mount itself.
-mounted() {
-    local i uuid
+echo "Validating by remounting each one from fstab..."
+# mount -a skips what is already mounted and exits 0 when a nofail device is missing.
+remounted() {
+    local i dir
     for i in $(seq 1 "$PARTITION_COUNT"); do
-        uuid=$(blkid -s UUID -o value "${TARGET_DRIVE}p${i}") || return 1
-        [[ -n "$uuid" && "$(findmnt -n -o UUID --mountpoint "${MOUNT_PREFIX}${i}")" == "$uuid" ]] || return 1
+        dir="${MOUNT_PREFIX}${i}"
+        umount "$dir" && mount "$dir" && on_dir "$dir" "${UUIDS[$((i-1))]}" || return 1
     done
 }
-if mount -a && mounted; then
+if remounted; then
     echo "OK — all mounts verified."
 else
-    echo "ERROR: a partition is not mounted where expected. Restoring backup..."
+    echo "ERROR: a partition does not mount from fstab. Restoring backup..."
     cp "$FSTAB_BAK" /etc/fstab
     exit 1
 fi
 
-# --- Step 6: Register with Proxmox ---
 echo
 echo "=== Step 6: Register with Proxmox ==="
 for i in $(seq 1 "$PARTITION_COUNT"); do

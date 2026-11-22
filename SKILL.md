@@ -86,12 +86,13 @@ Bootstrap this mode as follows:
 
    ```bash
    PIN=$(echo | openssl s_client -connect $H:8006 2>/dev/null | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64)
-   curl -s -k --pinnedpubkey "sha256//$PIN" https://$H:8006/api2/json/access/ticket \
+   curl -sS --fail-with-body -k --pinnedpubkey "sha256//$PIN" https://$H:8006/api2/json/access/ticket \
      --data-urlencode 'username=root@pam' --data-urlencode "password@$PWFILE"
    ```
 
 3. With cookie `PVEAuthCookie=<ticket>` and header
-   `CSRFPreventionToken: <csrf>`, create the user and grant it access:
+   `CSRFPreventionToken: <csrf>`, create the user and grant it access. Stop at
+   the first refusal: "already exists" means it is someone else's user.
 
    ```text
    POST /access/users            userid=<agent>@pve
@@ -134,9 +135,9 @@ source scripts/pve-api.sh
 
 pve_api GET '/cluster/resources?type=vm'
 pve_api GET '/nodes/<node>/status'
-upid=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>' | jq -r .data)
-pve_wait "$upid" 300      # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
-pve_task POST '/nodes/<node>/qemu/<new-vmid>/status/start'   # both in one: send, then wait
+upid=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>' | jq -r .data) &&
+pve_wait "$upid" 300 &&   # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
+pve_task POST '/nodes/<node>/qemu/<new-vmid>/status/start' &&   # both in one: send, then wait
 pve_vm_ip <node> <new-vmid> 180   # first IPv4 from the guest agent, polling until it answers
 ```
 
@@ -152,6 +153,7 @@ its own guests, give it a token that can touch nothing else: a resource pool
 for its guests plus four built-in roles. Run as an admin:
 
 ```text
+# Stop at the first refusal: "already exists" means that pool or user is someone else's.
 POST /pools                 poolid=agent
 POST /access/users          userid=agent@pve
 POST /access/users/agent@pve/token/t1    privsep=0     # save .data.value as in Mode A step 3
@@ -418,7 +420,7 @@ Sudoers (or the token) says yes; the agent layer says "ask first."
 
 When the user says "spin up a VM," the agent's actual command sequence is:
 
-1. **Verify sudoers covers what we need:** `sudo -n -l | grep -E '^.*NOPASSWD.*qm '` — if this returns nothing, stop and tell the user to install the sudoers file.
+1. **Verify sudoers covers what we need:** `sudo -n qm list` exits 0. A rule showing in `sudo -n -l` doesn't prove it works. If it fails, stop and tell the user to install the sudoers file.
 2. **Verify SSH works with key-only:** `ssh -o BatchMode=yes -o IdentitiesOnly=yes -i <key> zen-agent@<host> 'whoami'` — if this fails, stop (and see pitfall #24 before retrying).
 3. **Verify audit log exists:** `sudo -n -l | grep -i 'log_'` — if no logging is configured, the sudoers install is incomplete; fix before continuing.
 4. **Only then** start running `qm`, `pct`, `pvesh` commands.
@@ -458,16 +460,17 @@ ssh zen-agent@<proxmox> 'bash /tmp/proxmox-status.sh'
 ### Uploading an ISO from a USB or local path
 
 ```bash
+# Chained: a failed mount must not become a copy of the wrong directory.
 # Mount the source
-sudo -n mount /dev/sdX1 /mnt/source
+sudo -n mount /dev/sdX1 /mnt/source &&
 
 # Verify perms (sudoers must include /usr/bin/ls)
-sudo -n ls /mnt/source/
+sudo -n ls /mnt/source/ &&
 
 # Copy, run as root (user in Mode B, root SSH in Mode A).
 # A dir storage's ISO directory is <path>/template/iso/.
-mkdir -p <path>/template/iso
-cp /mnt/source/*.iso <path>/template/iso/
+mkdir -p <path>/template/iso &&
+cp /mnt/source/*.iso <path>/template/iso/ &&
 
 # Verify via pvesh
 pvesh get /nodes/<node>/storage/<storage>/content --content iso
@@ -533,7 +536,7 @@ lsblk -o NAME,SIZE,TYPE,MOUNTPOINT,MODEL,SERIAL,WWN
 ```
 
 Show the user the boot disk's serial and mark it OUT-OF-SCOPE explicitly.
-Reference drives by **serial** (e.g. `S413NS0RC03383M`), NOT by
+Reference drives by **serial** (e.g. `S1234NX0000001A`), NOT by
 `/dev/nvmeXnY` — NVMe device numbers shuffle across reboots. The boot disk
 in the typical homelab config is identifiable by containing `/boot/efi`
 and LVM volumes (`pve-root`, `pve-swap`, `pve-data`).
@@ -564,8 +567,8 @@ sudo mkfs.ext4 -L <label> /dev/nvmeXnYp1
 **Step 4: User mounts.**
 
 ```bash
-sudo mkdir -p /mnt/<label>
-sudo mount /dev/nvmeXnYp1 /mnt/<label>
+sudo mkdir -p /mnt/<label> &&
+sudo mount /dev/nvmeXnYp1 /mnt/<label> &&
 df -h /mnt/<label>     # verify the FULL partition size, NOT 458MB
 ```
 
@@ -573,10 +576,11 @@ df -h /mnt/<label>     # verify the FULL partition size, NOT 458MB
 (user in Mode B, root SSH in Mode A).**
 
 ```bash
-# mount -a exits 0 when a nofail device is missing, so check the mount itself.
+# mount -a skips what is already mounted and exits 0 when a nofail device is
+# missing, so remount this one from fstab and check it.
 UUID=$(sudo blkid -s UUID -o value /dev/nvmeXnYp1) && [ -n "$UUID" ] &&
   echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab &&
-  sudo mount -a &&
+  sudo umount /mnt/<label> && sudo mount /mnt/<label> &&
   [ "$(findmnt -n -o UUID --mountpoint /mnt/<label>)" = "$UUID" ] &&
   df -h /mnt/<label>
 ```
@@ -601,9 +605,11 @@ For ISO content in a `dir` storage, create the required subdirectory and copy
 files there:
 
 ```bash
-mkdir -p /mnt/<label>/template/iso
+# Chained, and only onto the mount: otherwise this fills the root disk.
+mountpoint -q /mnt/<label> &&
+mkdir -p /mnt/<label>/template/iso &&
 # Copy as root (user in Mode B, root SSH in Mode A).
-cp <source>.iso /mnt/<label>/template/iso/
+cp <source>.iso /mnt/<label>/template/iso/ &&
 sudo -n pvesm list <name>   # verifies content discovered by directory scan
 ```
 
@@ -752,11 +758,12 @@ cloud-init, Windows 11 with UEFI+TPM) live in
 ### Creating an LXC container
 
 ```bash
+# pct create exits 0 when --start fails, so the last line looks.
 # 1. Update the template list, find the current name, download it.
 #    The list includes arm64 builds; pick the one matching the host.
-sudo -n pveam update
-sudo -n pveam available --section system | grep -E 'debian-13.*amd64'
-sudo -n pveam download local <template-name>
+sudo -n pveam update &&
+sudo -n pveam available --section system | grep -E 'debian-13.*amd64' &&
+sudo -n pveam download local <template-name> &&
 
 # 2. Create the container (key-based root login; no password on the command line)
 sudo -n pct create <ctid> local:vztmpl/<template-name> \
@@ -768,7 +775,8 @@ sudo -n pct create <ctid> local:vztmpl/<template-name> \
     --features nesting=1 \
     --unprivileged 1 \
     --ssh-public-keys /root/agent.pub \
-    --start 1
+    --start 1 &&
+[ "$(sudo -n pct status <ctid>)" = "status: running" ]
 ```
 
 Use `scripts/lxc-from-template.sh` for the wrapper.
@@ -946,17 +954,18 @@ via the `pvesh` API or `/etc/pve/firewall/`. The agent should always go
 through `pvesh`, never edit `/etc/pve/firewall/*.fw` directly.
 
 ```bash
+# Chained: never switch the firewall on if the allow rule was refused.
 # Add a rule to allow SSH from a specific subnet on the host
 sudo -n pvesh create /nodes/<node>/firewall/rules \
     --action ACCEPT --type in --source 192.168.50.0/24 \
-    --dest 192.168.50.0/24 --dport 22 --proto tcp
+    --dest 192.168.50.0/24 --dport 22 --proto tcp &&
 
 # List current rules
-sudo -n pvesh get /nodes/<node>/firewall/rules
+sudo -n pvesh get /nodes/<node>/firewall/rules &&
 
 # Switches live under /options. The datacenter switch is the master: node and
 # VM rules are not enforced while it is off (the default).
-sudo -n pvesh set /cluster/firewall/options --enable 1
+sudo -n pvesh set /cluster/firewall/options --enable 1 &&
 # A VM's rules also need its firewall enabled and firewall=1 on each NIC:
 sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1
 ```
@@ -1337,7 +1346,7 @@ Stop and tell the user before a write would push the pool past about 80%.
   pre-flight size check (refuses to overflow the target fs) and a byte
   comparison of each copy, then lists what Proxmox sees. Run on the Proxmox host as root.
 - `scripts/add-nvme-storage.sh` — full pipeline walkthrough: identify
-  drives by serial, prompt the user to confirm scope, give fdisk
+  drives by serial, take only a blank disk, prompt the user to confirm scope, give fdisk
   instructions for 1-or-2 partition layouts, instruct on mkfs+mount,
   then write UUID-based `/etc/fstab` entries and `pvesm add dir`
   registrations. Runs on the Proxmox host as root. Designed for
@@ -1376,7 +1385,7 @@ This skill is designed to work with any agent that loads
 | Claude Code | `~/.claude/skills/<name>/SKILL.md` | Loaded by Claude Code when SKILL.md is present. |
 | Codex CLI | `~/.codex/skills/<name>/SKILL.md` | Auto-loads from description. |
 | OpenCode | `~/.config/opencode/skills/<name>/SKILL.md` | Uses OpenAI agent-skills format. |
-| OpenClaw | `<workspace>/skills/<name>/SKILL.md` | Auto-loads. Workspace default `~/.openclaw/workspace`. For users on the literal Windows-style path (`C:\Users\kev\.openclaw\workspace`), pass `--openclaw-workspace` to `install.sh`. |
+| OpenClaw | `<workspace>/skills/<name>/SKILL.md` | Auto-loads. Workspace default `~/.openclaw/workspace`. For users on the literal Windows-style path (`C:\Users\<you>\.openclaw\workspace`), pass `--openclaw-workspace` to `install.sh`. |
 | Cursor | `~/.cursor/skills/<name>/SKILL.md` | Auto-loads. Bundled Cursor skills live in `~/.cursor/skills-cursor/`; user-installed skills go in `~/.cursor/skills/`. |
 | Paperclip | (agent-specific) | Check Paperclip docs for skill path. |
 

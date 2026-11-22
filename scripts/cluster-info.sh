@@ -4,13 +4,15 @@
 # output just shows the local node).
 #
 # Requires sudoers rules for: pvesh, pvesm, qm list, pct list,
-# pvecm, ha-manager, journalctl.
+# ha-manager, journalctl.
 # Run via SSH from the agent host:
 #   scp scripts/cluster-info.sh zen-agent@<proxmox>:/tmp/
 #   ssh zen-agent@<proxmox> 'bash /tmp/cluster-info.sh'
 
 set -uo pipefail
 
+SUDO=""
+[[ $EUID -ne 0 ]] && SUDO="sudo -n"
 failed=0
 # A read that fails is unknown, which is not the same as empty.
 show() {
@@ -26,38 +28,30 @@ echo " $(date)"
 echo "========================================"
 
 echo
-echo "=== Cluster status (pvecm) ==="
-if out=$(pvecm status 2>&1); then
-    echo "$out"
-elif grep -q 'corosync.conf.* does not exist' <<<"$out"; then
-    echo "(not in a cluster)"
-else
-    echo "$out"
-    echo "!! FAILED: pvecm status (cluster state is unknown)"
-    failed=1
-fi
+echo "=== Cluster status (no 'cluster' row = standalone) ==="
+show $SUDO pvesh get /cluster/status   # not pvecm: it is outside the agent allowlist
 
 echo
 echo "=== Nodes ==="
-show pvesh get /nodes
+show $SUDO pvesh get /nodes
 
 echo
 echo "=== Cluster resources (all VMs and CTs across nodes) ==="
-show pvesh get /cluster/resources --type vm
+show $SUDO pvesh get /cluster/resources --type vm
 
 echo
 echo "=== Storage pools ==="
-show pvesm status
+show $SUDO pvesm status
 
 echo
 echo "=== HA services and rules ==="
-show ha-manager status
+show $SUDO ha-manager status
 # PVE 9 replaced HA groups with rules; this fails harmlessly on PVE 8.
-ha-manager rules list 2>&1 || echo "(HA rules not read: PVE 9+ only, or the read failed)"
+$SUDO ha-manager rules list 2>&1 || echo "(HA rules not read: PVE 9+ only, or the read failed)"
 
 echo
 echo "=== Recent pve-cluster log errors ==="
-show journalctl -u pve-cluster --no-pager -n 10 -p err
+show $SUDO journalctl -u pve-cluster --no-pager -n 10 -p err
 
 echo
 echo "========================================"

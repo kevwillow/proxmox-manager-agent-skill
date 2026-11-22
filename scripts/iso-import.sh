@@ -153,7 +153,8 @@ fi
 # Show what Proxmox now lists, if the target is registered storage.
 # `pvesm status` has no path column, so ask each storage where its ISOs live.
 STORAGE_ID=""
-for id in $(pvesm status 2>/dev/null | awk 'NR>1 {print $1}'); do
+IDS=$(pvesm status | awk 'NR>1 {print $1}') || { echo "ERROR: copies verified, but pvesm status failed, so Proxmox's view is unknown"; exit 1; }
+for id in $IDS; do
     if [[ "$(pvesm path "$id:iso/x.iso" 2>/dev/null || true)" == "$ISO_DIR/x.iso" ]]; then
         STORAGE_ID=$id
         break

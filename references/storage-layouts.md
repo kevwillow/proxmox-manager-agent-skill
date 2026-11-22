@@ -57,10 +57,11 @@ than physically exists, on the assumption that not all VMs will be
 fully using their disks at the same time.
 
 ```bash
+# Chained: a failed step must not register someone else's volume group.
 # Create a thin pool on a free partition or new disk
-sudo -n pvcreate /dev/nvme1n1p1
-sudo -n vgcreate vg-data /dev/nvme1n1p1
-sudo -n lvcreate -L 100%FREE -T vg-data/thin-data
+sudo -n pvcreate /dev/nvme1n1p1 &&
+sudo -n vgcreate vg-data /dev/nvme1n1p1 &&
+sudo -n lvcreate -L 100%FREE -T vg-data/thin-data &&
 
 # Register with Proxmox
 sudo -n pvesm add lvmthin vmdata-lvmthin \
@@ -92,13 +93,17 @@ redundancy, all in one. The trade-off is RAM (ZFS loves RAM for
 dedup/cache) and slightly more complex setup.
 
 ```bash
-# Create a mirrored pool (2 drives, survives 1 failure)
-sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1
+# Create a mirrored pool (2 drives, survives 1 failure), then register it.
+# Chained: a refused create must not register someone else's pool.
+sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1 &&
+sudo -n pvesm add zfspool tank \
+    --pool tank \
+    --content images,rootdir
+```
 
+```bash
 # Or a single-drive pool (no redundancy but compression + snapshots)
-sudo -n zpool create -f tank /dev/nvme1n1
-
-# Register with Proxmox
+sudo -n zpool create -f tank /dev/nvme1n1 &&
 sudo -n pvesm add zfspool tank \
     --pool tank \
     --content images,rootdir
@@ -137,7 +142,7 @@ serious VMs, you want them on a separate pool:
 
 ```bash
 # After installing a second disk and partitioning:
-sudo -n zpool create -f tank /dev/nvme1n1
+sudo -n zpool create -f tank /dev/nvme1n1 &&
 sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 
 # VMs created with --scsi0 tank:32 will land on the new pool.
@@ -148,7 +153,7 @@ sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 If you only have one large drive and don't need redundancy:
 
 ```bash
-sudo -n zpool create -f tank /dev/nvme1n1
+sudo -n zpool create -f tank /dev/nvme1n1 &&
 sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 ```
 
@@ -163,8 +168,8 @@ For a more production-like setup:
 
 ```bash
 # Two SSDs in a ZFS mirror for VM storage
-sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1
-sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
+sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1 &&
+sudo -n pvesm add zfspool tank --pool tank --content images,rootdir &&
 
 # A larger HDD for backups
 sudo -n pvesm add dir backup \

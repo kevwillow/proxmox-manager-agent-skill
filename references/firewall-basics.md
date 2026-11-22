@@ -81,15 +81,16 @@ Every switch lives under an `/options` path. `pvesh set .../firewall --enable 1`
 (without `/options`) fails with `No 'set' handler`.
 
 ```bash
+# Chained, so a refused switch is not left unnoticed.
 # Datacenter: the master switch. Nothing below is enforced while this is off.
-sudo -n pvesh set /cluster/firewall/options --enable 1
+sudo -n pvesh set /cluster/firewall/options --enable 1 &&
 
 # Node level (on by default once the datacenter switch is on)
-sudo -n pvesh set /nodes/<node>/firewall/options --enable 1
+sudo -n pvesh set /nodes/<node>/firewall/options --enable 1 &&
 
 # VM level: enable the VM's firewall AND mark each NIC with firewall=1,
 # or the VM's rules never apply to that NIC.
-sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1
+sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1 &&
 sudo -n qm set <vmid> --net0 virtio=<MAC>,bridge=vmbr0,firewall=1   # keep the existing MAC
 ```
 
@@ -106,16 +107,17 @@ host networking with a dead-man switch*; the same timer can run
 attach to multiple VMs. Useful for "all web servers get 80/443 from LAN":
 
 ```bash
+# Chained: "already exists" means someone else's group, so add nothing to it.
 # Create a group
 sudo -n pvesh create /cluster/firewall/groups \
     --group web-tier \
-    --comment "Web server rules"
+    --comment "Web server rules" &&
 
 # Add rules to the group
 sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp
+    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
 sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp
+    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
 
 # Attach to a VM
 sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
@@ -129,7 +131,7 @@ sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
 ```bash
 # Allow Tailscale CGNAT to everything
 sudo -n pvesh create /cluster/firewall/rules \
-    --action ACCEPT --type in --source 100.64.0.0/10 --comment "Tailscale"
+    --action ACCEPT --type in --source 100.64.0.0/10 --comment "Tailscale" &&
 
 # Allow LAN SSH
 sudo -n pvesh create /cluster/firewall/rules \
@@ -140,20 +142,21 @@ sudo -n pvesh create /cluster/firewall/rules \
 ### Web server VM
 
 ```bash
-VMID=100
+# Chained: never switch the firewall on if an allow rule was refused.
+VMID=100 &&
 
 # LAN HTTP/HTTPS inbound
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp
+    --action ACCEPT --type in --source 192.168.50.0/24 --dport 80 --proto tcp &&
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp
+    --action ACCEPT --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
 
 # Tailnet SSH (so you can SSH from your phone over tailscale)
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
-    --action ACCEPT --type in --source 100.64.0.0/10 --dport 22 --proto tcp
+    --action ACCEPT --type in --source 100.64.0.0/10 --dport 22 --proto tcp &&
 
 # Enable firewall for this VM, and on its NIC (keep the MAC from `qm config`)
-sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall/options --enable 1
+sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall/options --enable 1 &&
 sudo -n qm set $VMID --net0 virtio=<MAC>,bridge=vmbr0,firewall=1
 ```
 
