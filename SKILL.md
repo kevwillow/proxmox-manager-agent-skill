@@ -1347,7 +1347,7 @@ Stop and tell the user before a write would push the pool past about 80%.
 - `runbooks/snapshot_change.md` — change a VM through Proximo: snapshot,
   change, then keep it or prove the rollback.
 - `runbooks/clone_dev_vm.md` — build a dev VM through Proximo: full clone of
-  a cloud-init template, user and key, boot, prove cloud-init ran.
+  a cloud-init template, user and key, boot, read the hostname back.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 
