@@ -91,7 +91,8 @@ sudo -n pvesh set /nodes/<node>/firewall/options --enable 1 &&
 # VM level: enable the VM's firewall AND mark each NIC with firewall=1,
 # or the VM's rules never apply to that NIC.
 sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall/options --enable 1 &&
-sudo -n qm set <vmid> --net0 virtio=<MAC>,bridge=vmbr0,firewall=1   # keep the existing MAC
+NET=$(sudo -n qm config <vmid> | sed -n 's/^net0: //p' | sed -E 's/,firewall=[01]//') && [ -n "$NET" ] &&
+sudo -n qm set <vmid> --net0 "$NET,firewall=1"   # net0 is replaced whole: keep MAC, VLAN, link_down
 ```
 
 **WARNING: enabling the datacenter firewall with only the defaults blocks all
@@ -119,9 +120,9 @@ sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
 sudo -n pvesh create /cluster/firewall/groups/web-tier/rules \
     --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 --dport 443 --proto tcp &&
 
-# Attach to a VM
-sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
-    --groups web-tier
+# Attach to a VM: a group is attached as a rule
+sudo -n pvesh create /nodes/<node>/qemu/<vmid>/firewall/rules \
+    --type group --action web-tier --enable 1
 ```
 
 ## Common patterns
@@ -129,7 +130,8 @@ sudo -n pvesh set /nodes/<node>/qemu/<vmid>/firewall \
 ### Single-node homelab, locked down
 
 ```bash
-# Allow Tailscale CGNAT to everything
+# Allow Tailscale CGNAT to everything. This trusts the address range, on every
+# port: it is not proof the traffic came over Tailscale.
 sudo -n pvesh create /cluster/firewall/rules \
     --action ACCEPT --enable 1 --type in --source 100.64.0.0/10 --comment "Tailscale" &&
 
@@ -156,9 +158,10 @@ sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
 sudo -n pvesh create /nodes/<node>/qemu/$VMID/firewall/rules \
     --action ACCEPT --enable 1 --type in --source 100.64.0.0/10 --dport 22 --proto tcp &&
 
-# Enable firewall for this VM, and on its NIC (keep the MAC from `qm config`)
+# Enable firewall for this VM, and on its NIC (all its other options kept)
 sudo -n pvesh set /nodes/<node>/qemu/$VMID/firewall/options --enable 1 &&
-sudo -n qm set $VMID --net0 virtio=<MAC>,bridge=vmbr0,firewall=1
+NET=$(sudo -n qm config $VMID | sed -n 's/^net0: //p' | sed -E 's/,firewall=[01]//') && [ -n "$NET" ] &&
+sudo -n qm set $VMID --net0 "$NET,firewall=1"
 ```
 
 ## Pitfalls

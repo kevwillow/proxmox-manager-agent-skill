@@ -38,14 +38,16 @@ qm create 100 \
     --scsi0 vmdata:32,format=qcow2 \
     --ide2 iso:iso/ubuntu-24.04.2-live-server-amd64.iso,media=cdrom \
     --boot order=ide2 \
-    --agent enabled=1
+    --agent enabled=1 &&
+  qm config 100 | grep '^smbios1:' > ~/vm100.id   # marks it as ours for the edit below
 ```
 
 After install, switch boot order to disk-only and detach ISO:
 
 ```bash
-# Only on the VM created above: after a refused create, 100 is someone else's guest.
-qm config 100 | grep -qx 'name: ubuntu-server' &&
+# Only on the VM created above (a name can match by chance, its SMBIOS UUID can't):
+# after a refused create, 100 is someone else's guest.
+[ -s ~/vm100.id ] && qm config 100 | grep -qxF -f ~/vm100.id &&
   qm set 100 --boot order=scsi0 &&
   qm set 100 --ide2 none
 ```
@@ -127,7 +129,8 @@ qm create 103 \
     --efidisk0 vmdata:1,format=qcow2 \
     --tpmstate0 vmdata:1,version=v2.0 \
     --machine pc-q35-8.1 \
-    --agent enabled=1
+    --agent enabled=1 &&
+  qm config 103 | grep '^smbios1:' > ~/vm103.id   # marks it as ours for the edit below
 ```
 
 The TPM state file lives on the same storage as the disk. For the
@@ -135,7 +138,7 @@ VirtIO drivers ISO (needed for Windows to see the virtio NIC and
 disk during install), attach a second CD-ROM:
 
 ```bash
-qm config 103 | grep -qx 'name: windows-11' &&
+[ -s ~/vm103.id ] && qm config 103 | grep -qxF -f ~/vm103.id &&
   qm set 103 --ide3 iso:iso/virtio-win-0.1.240.iso,media=cdrom
 ```
 

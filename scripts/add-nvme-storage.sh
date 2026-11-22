@@ -42,6 +42,15 @@ if [[ -z "$BOOT_KEY" ]] || ! grep -qxF -- "$BOOT_KEY" <<<"$ALL_SERIALS"; then
     echo "ERROR: no disk here has the serial '$BOOT_SERIAL'. Aborting."
     exit 1
 fi
+boot_use=
+while IFS= read -r name; do
+    key=$(lsblk -dn -o SERIAL "/dev/$name" | tr -d '[:blank:]') || continue
+    [[ "$key" != "$BOOT_KEY" ]] || boot_use+=" $(lsblk -nr -o MOUNTPOINT,LABEL "/dev/$name")"$'\n'
+done < <(lsblk -dn -o NAME)
+if ! grep -qE '(^|[[:space:]])(/|/boot|/boot/efi|rpool)([[:space:]]|$)' <<<"$boot_use"; then
+    echo "ERROR: '$BOOT_SERIAL' is not the boot disk's serial (no /, /boot or rpool on it). Aborting."
+    exit 1
+fi
 echo "Excluding boot drive: $BOOT_SERIAL"
 echo
 
@@ -61,6 +70,9 @@ if [[ ! -b "$TARGET_DRIVE" ]]; then
     exit 1
 fi
 
+TARGET_DRIVE=$(readlink -f "$TARGET_DRIVE")
+# nvme0n1 -> nvme0n1p1, sdb -> sdb1
+part() { case "$TARGET_DRIVE" in *[0-9]) echo "${TARGET_DRIVE}p$1";; *) echo "${TARGET_DRIVE}$1";; esac; }
 # Confirm identity
 if [[ "$(lsblk -dn -o TYPE "$TARGET_DRIVE")" != "disk" ]]; then
     echo "ERROR: $TARGET_DRIVE is not a whole disk. Aborting."
@@ -161,7 +173,7 @@ echo "=== Step 3 & 4: Format and mount ==="
 echo "Run as root:"
 echo
 for i in $(seq 1 "$PARTITION_COUNT"); do
-    PART="${TARGET_DRIVE}p${i}"
+    PART=$(part "$i")
     LABEL="${PVE_STORAGE_NAMES[$((i-1))]}"
     MOUNT_DIR="${MOUNT_PREFIX}${i}"
     echo "  mkfs.ext4 -L $LABEL $PART"
@@ -184,12 +196,18 @@ echo "=== Step 5: Writing /etc/fstab entries (UUID-based) ==="
 on_dir() { [[ "$(findmnt -n -o UUID --mountpoint "$1")" == "$2" ]]; }
 UUIDS=()
 for i in $(seq 1 "$PARTITION_COUNT"); do
-    PART="${TARGET_DRIVE}p${i}"
+    PART=$(part "$i")
     if ! UUID=$(blkid -s UUID -o value "$PART") || [[ -z "$UUID" ]] || ! on_dir "${MOUNT_PREFIX}${i}" "$UUID"; then
         echo "ERROR: $PART is not formatted and mounted on ${MOUNT_PREFIX}${i}. /etc/fstab is unchanged."
         exit 1
     fi
     UUIDS+=("$UUID")
+done
+for i in $(seq 1 "$PARTITION_COUNT"); do
+    if ! n=$(awk -v d="${MOUNT_PREFIX}${i}" '$1 !~ /^#/ && $2 == d {n++} END {print n+0}' /etc/fstab) || [[ "$n" != 0 ]]; then
+        echo "ERROR: /etc/fstab already has, or can't be checked for, ${MOUNT_PREFIX}${i}. It is unchanged."
+        exit 1
+    fi
 done
 FSTAB_BAK="/etc/fstab.bak.$(date +%Y%m%d-%H%M%S)"
 cp /etc/fstab "$FSTAB_BAK"
@@ -215,7 +233,7 @@ remounted() {
 if remounted; then
     echo "OK — all mounts verified."
 else
-    echo "ERROR: a partition does not mount from fstab. Restoring backup..."
+    echo "ERROR: a partition does not mount from fstab. Restoring backup of fstab (some of them may now be unmounted)..."
     cp "$FSTAB_BAK" /etc/fstab
     exit 1
 fi

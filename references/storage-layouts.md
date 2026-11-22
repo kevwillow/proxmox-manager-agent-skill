@@ -89,13 +89,14 @@ and you have monitoring on the pool's free space.
 ## `zfspool` — the homelab sweet spot
 
 ZFS gives you snapshots, compression, and (with mirrors/raidz)
-redundancy, all in one. The trade-off is RAM (ZFS loves RAM for
+redundancy, all in one. Name disks by `/dev/disk/by-id` (`nvme1n1` can be
+another disk after a reboot), and don't add `-f`: a refusal means the disk is in use. The trade-off is RAM (ZFS loves RAM for
 dedup/cache) and slightly more complex setup.
 
 ```bash
 # Create a mirrored pool (2 drives, survives 1 failure), then register it.
 # Chained: a refused create must not register someone else's pool.
-sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1 &&
+sudo -n zpool create tank mirror /dev/disk/by-id/<disk-1> /dev/disk/by-id/<disk-2> &&
 sudo -n pvesm add zfspool tank \
     --pool tank \
     --content images,rootdir
@@ -103,7 +104,7 @@ sudo -n pvesm add zfspool tank \
 
 ```bash
 # Or a single-drive pool (no redundancy but compression + snapshots)
-sudo -n zpool create -f tank /dev/nvme1n1 &&
+sudo -n zpool create tank /dev/disk/by-id/<disk> &&
 sudo -n pvesm add zfspool tank \
     --pool tank \
     --content images,rootdir
@@ -142,7 +143,7 @@ serious VMs, you want them on a separate pool:
 
 ```bash
 # After installing a second disk and partitioning:
-sudo -n zpool create -f tank /dev/nvme1n1 &&
+sudo -n zpool create tank /dev/disk/by-id/<disk> &&
 sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 
 # VMs created with --scsi0 tank:32 will land on the new pool.
@@ -153,7 +154,7 @@ sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 If you only have one large drive and don't need redundancy:
 
 ```bash
-sudo -n zpool create -f tank /dev/nvme1n1 &&
+sudo -n zpool create tank /dev/disk/by-id/<disk> &&
 sudo -n pvesm add zfspool tank --pool tank --content images,rootdir
 ```
 
@@ -168,7 +169,7 @@ For a more production-like setup:
 
 ```bash
 # Two SSDs in a ZFS mirror for VM storage
-sudo -n zpool create -f tank mirror /dev/nvme1n1 /dev/nvme2n1 &&
+sudo -n zpool create tank mirror /dev/disk/by-id/<disk-1> /dev/disk/by-id/<disk-2> &&
 sudo -n pvesm add zfspool tank --pool tank --content images,rootdir &&
 
 # A larger HDD for backups

@@ -125,7 +125,7 @@ likely an interrupted USB read or a file too large for the destination.
 ```bash
 # Always umount before physically unplugging the USB
 sudo -n umount /mnt/ventoy &&
-  ! findmnt /mnt/ventoy &&
+  awk '$2 == "/mnt/ventoy" {found=1} END {exit found}' /proc/self/mounts &&
   echo "safe to unplug"
 ```
 

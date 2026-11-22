@@ -36,13 +36,14 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    own release workflow before installing:
 
    ```bash
-   curl -sS -H 'Accept: application/vnd.pypi.integrity.v1+json' \
-     https://pypi.org/integrity/proximo-proxmox/<version>/proximo_proxmox-<version>-py3-none-any.whl/provenance |
-     jq -es 'length == 1 and ([.[0].attestation_bundles[].publisher | "\(.repository) \(.workflow)"] | unique) == ["john-broadway/proximo release-pypi.yml"]' &&
+   P=$(curl -sS --fail --max-time 30 -H 'Accept: application/vnd.pypi.integrity.v1+json' \
+     https://pypi.org/integrity/proximo-proxmox/<version>/proximo_proxmox-<version>-py3-none-any.whl/provenance) &&
+     jq -es 'length == 1 and ([.[0].attestation_bundles[].publisher | "\(.repository) \(.workflow)"] | unique) == ["john-broadway/proximo release-pypi.yml"]' <<<"$P" &&
      uv tool install 'proximo-proxmox==<version>'
    ```
 
    It prints `true` and installs only for `john-broadway/proximo release-pypi.yml`.
+   That checks who published the version, not the bytes `uv` then downloads.
 
 2. **Mint the two tokens on the PVE host** (the user runs it as root):
    `templates/proximo-token-setup.sh`. It makes `proximo@pve!read`
@@ -130,10 +131,10 @@ Common paths (node name is case-sensitive):
 
 The same engine runs from a shell: `proximo-core pve GET /cluster/resources`.
 A mutation there runs only with `--confirm`; without it the plan is printed and
-the exit code is 3. Read `--plan` first, then repeat the call with `--confirm`.
+the exit code is 3 (an explicit `--plan` exits 0). Read `--plan` first, then repeat the call with `--confirm`.
 
-For a restore test, follow `runbooks/restore_test.md`. To have Proximo serve it
-as a prompt, point `PROXIMO_RUNBOOKS_DIR` at that folder.
+For a restore test follow `runbooks/restore_test.md`, and for a change to a VM
+`runbooks/snapshot_change.md`. To have Proximo serve them as prompts, point `PROXIMO_RUNBOOKS_DIR` at that folder.
 
 ## Gotchas (measured)
 
@@ -197,7 +198,7 @@ as a prompt, point `PROXIMO_RUNBOOKS_DIR` at that folder.
 - **A command's arguments are spelled differently by lane.** Over MCP both
   lanes take a list. From `proximo-core`, container exec needs JSON
   (`'command=["id","-u"]'`); VM exec takes only a program, so use
-  `command=/usr/bin/bash 'input-data=id -u'`. A repeated `key=value` keeps
+  `command=/usr/bin/bash 'input-data=id -u'` (shell code: fixed, trusted text only). A repeated `key=value` keeps
   the last one silently.
 - **A capped config read drops whole keys**, NICs included. List the keys from
   `GET .../qemu/<vmid>/pending` with `fields=key`, then read the config with

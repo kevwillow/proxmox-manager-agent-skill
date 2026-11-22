@@ -47,7 +47,15 @@ echo
 echo "=== HA services and rules ==="
 show $SUDO ha-manager status
 # PVE 9 replaced HA groups with rules; this fails harmlessly on PVE 8.
-$SUDO ha-manager rules list 2>&1 || echo "(HA rules not read: PVE 9+ only, or the read failed)"
+if rules=$($SUDO ha-manager rules list 2>&1); then
+    echo "$rules"
+elif grep -qi 'unknown command' <<<"$rules"; then
+    echo "(no HA rules: PVE 9+ only)"
+else
+    echo "$rules"
+    echo "!! FAILED: ha-manager rules list (this section is unknown, not empty)"
+    failed=1
+fi
 
 echo
 echo "=== Recent pve-cluster log errors ==="

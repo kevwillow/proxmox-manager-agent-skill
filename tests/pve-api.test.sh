@@ -3,7 +3,7 @@
 # Run: bash tests/pve-api.test.sh   (optional arg: another copy of pve-api.sh to test)
 # shellcheck source=scripts/pve-api.sh
 source "${1:-$(dirname "$0")/../scripts/pve-api.sh}"
-sleep() { :; }
+sleep() { SECONDS=$((SECONDS + $1)); }   # a wait costs no real time
 ERR=$(mktemp); CFG=$(mktemp); PUTS=$(mktemp); trap 'rm -f "$ERR" "$CFG" "$PUTS"' EXIT
 fail=0
 check() { if [[ "$2" == "$3" ]]; then echo "PASS $1"; else echo "FAIL $1: got [$2] want [$3]"; fail=1; fi; }
@@ -44,7 +44,8 @@ pve_api() {
         [[ $PUT_WORKS == 1 ]] || continue
         kv=$(jq -c --arg k "${a%%=*}" --arg v "${a#*=}" '.data[$k]=$v' "$CFG") && echo "$kv" >"$CFG"
       done
-      echo '{"data":null}' ;;
+      echo '{"data":null}'
+      [[ $PUT_WORKS != refused ]] || return 22 ;;
   esac
 }
 copy() { echo "$1" >"$CFG"; : >"$PUTS"; }
@@ -63,7 +64,37 @@ copy '{"data":{"onboot":1}}'
 check "isolate: no NIC is fine" "$(isolate)" 0
 
 copy '{"data":{"net0":"virtio=AA:AA:AA:AA:AA:00,bridge=vmbr0"}}'
-PUT_WORKS=0; check "isolate: refused write fails closed" "$(isolate)" 1; PUT_WORKS=1
+PUT_WORKS=0; check "isolate: accepted but unchanged fails closed" "$(isolate)" 1; PUT_WORKS=1
+copy '{"data":{"net0":"virtio=AA:AA:AA:AA:AA:00,bridge=vmbr0,link_down=1","onboot":0,"protection":0}}'
+PUT_WORKS=refused; check "isolate: refused write fails closed even if it reads as isolated" "$(isolate)" 1; PUT_WORKS=1
+
+# A read-back that is short or empty.
+for after in '{"data":{"net0":"virtio=A,bridge=b,link_down=1","onboot":0,"protection":0}}' '{"data":{}}' '{"data":{"net0":"virtio=A,bridge=b,link_down=1","net1":"virtio=OTHER,bridge=b,link_down=1","onboot":0,"protection":0}}'; do
+  got=$(
+    : >"$PUTS"
+    pve_api() {
+      case "$1 $2" in
+        "GET "*/status/current) echo '{"data":{"status":"stopped"}}' ;;
+        "PUT "*) echo put >"$PUTS" ;;
+        "GET "*/config) if [[ -s $PUTS ]]; then echo "$after"; else echo '{"data":{"net0":"virtio=A,bridge=b","net1":"virtio=B,bridge=b"}}'; fi ;;
+      esac
+    }
+    isolate)
+  check "isolate: read-back must match what was sent: $after" "$got" 1
+done
+got=$(
+  pve_api() { case "$1 $2" in "GET "*/status/current) echo '{"data":{"status":"stopped"}}'; return 18 ;; "GET "*) echo '{"data":{"onboot":0,"protection":0}}' ;; esac; }
+  isolate)
+check "isolate: cut status read is not 'stopped'" "$got" 1
+got=$(pve_api() { echo '{"data":{"result":[{"name":"eth0","ip-addresses":[{"ip-address-type":"ipv4","ip-address":"10.0.0.5"}]}]}}'; return 18; }
+  pve_vm_ip node1 100 6 2>/dev/null; echo "rc$?")
+check "ip: cut read is not an answer" "$got" rc2
+got=$(pve_api() { sleep 5; echo '{"data":{"status":"running"}}'; }
+  a=$SECONDS; pve_wait "$UPID" 9 >/dev/null 2>&1; echo $((SECONDS - a <= 16)))
+check "wait: slow requests count toward the timeout" "$got" 1
+got=$(pve_api() { printf '{"data":"%s"}\ngarbage' "$UPID"; }
+  pve_wait() { return 0; }; pve_task POST /x >/dev/null 2>&1; echo $?)
+check "task: unparsable reply is a failure" "$got" 1
 
 copy '{"data":{"net0":"virtio=AA:AA:AA:AA:AA:00,bridge=vmbr0"}}'
 VMSTATE=running; check "isolate: running VM refused" "$(isolate)" 1; VMSTATE=stopped

@@ -54,7 +54,8 @@ original's MAC address and SMBIOS UUID. Leave it off only to rebuild a lost
 guest in place, where the old identity is wanted. With Proximo,
 work disarmed and let the user run `proximo arm` when a change is needed.
 Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
-For a restore test through Proximo, follow `runbooks/restore_test.md`.
+For a restore test through Proximo, follow `runbooks/restore_test.md`; before
+changing a VM through it, follow `runbooks/snapshot_change.md`.
 
 ## When to Use
 
@@ -87,9 +88,11 @@ Bootstrap this mode as follows:
    ```bash
    # No certificate must mean no pin: hashing empty input exits 0 with a valid-looking pin.
    KEY=$(echo | openssl s_client -connect $H:8006 2>/dev/null | openssl x509 -pubkey -noout) && [ -n "$KEY" ] &&
-   PIN=$(echo "$KEY" | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | base64) &&
+   DER=$(set -o pipefail; echo "$KEY" | openssl pkey -pubin -outform der | base64) && [ -n "$DER" ] &&
+   PIN=$(echo "$DER" | base64 -d | openssl dgst -sha256 -binary | base64) &&
+   umask 077 &&   # the ticket is a root credential: keep it off the screen
    curl -sS --fail-with-body -k --pinnedpubkey "sha256//$PIN" https://$H:8006/api2/json/access/ticket \
-     --data-urlencode 'username=root@pam' --data-urlencode "password@$PWFILE"
+     --data-urlencode 'username=root@pam' --data-urlencode "password@$PWFILE" > ticket.json
    ```
 
 3. With cookie `PVEAuthCookie=<ticket>` and header
@@ -109,9 +112,9 @@ Bootstrap this mode as follows:
    ```bash
    # The secret is shown once: delete the response only after it is saved.
    T=~/.config/pve/<host>.token
-   install -m 600 /dev/null "$T" &&
-     jq -ej '.data | select(.value and .["full-tokenid"]) | "PVEAPIToken=\(.["full-tokenid"])=\(.value)"' token-response.json > "$T" &&
-     [ -s "$T" ] && rm token-response.json && [ -n "$PIN" ] &&
+   install -m 600 /dev/null "$T.new" &&
+     jq -ej '.data | select((.value // "") != "" and (.["full-tokenid"] // "") != "") | "PVEAPIToken=\(.["full-tokenid"])=\(.value)"' token-response.json > "$T.new" &&
+     [ -s "$T.new" ] && mv "$T.new" "$T" && rm token-response.json && [ -n "$PIN" ] &&
    install -m 600 /dev/null ~/.config/pve/<host>.pin &&
    printf 'sha256//%s' "$PIN" > ~/.config/pve/<host>.pin
    ```
@@ -124,7 +127,7 @@ Bootstrap this mode as follows:
      setsid -w ssh -o PubkeyAuthentication=no root@$H 'cat >> /root/.ssh/authorized_keys'
    ```
 
-5. Delete the password file.
+5. Delete the password file and `ticket.json`.
 
 Use the token through the helpers in `scripts/pve-api.sh`: pinned TLS, token
 read from its file on each call, and a task wait that fails loudly. Node names
@@ -137,7 +140,8 @@ source scripts/pve-api.sh
 
 pve_api GET '/cluster/resources?type=vm'
 pve_api GET '/nodes/<node>/status'
-upid=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>' | jq -r .data) &&
+reply=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>') &&
+upid=$(jq -r .data <<<"$reply") &&
 pve_wait "$upid" 300 &&   # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
 pve_task POST '/nodes/<node>/qemu/<new-vmid>/status/start' &&   # both in one: send, then wait
 pve_vm_ip <node> <new-vmid> 180   # first IPv4 from the guest agent, polling until it answers
@@ -506,7 +510,7 @@ by design — see *Explicit blacklist* above).
 **API shortcut (Mode A).** List drives with their serials without a shell:
 
 ```bash
-pve_api GET /nodes/<node>/disks/list | jq -c '.data[] | {devpath, model, serial, size, used, wearout}'
+reply=$(pve_api GET /nodes/<node>/disks/list) && jq -c '.data[] | {devpath, model, serial, size, used, wearout}' <<<"$reply"
 ```
 
 `wearout` is the percentage of life **remaining** (100 = new), not used.
@@ -581,6 +585,8 @@ df -h /mnt/<label>     # verify the FULL partition size, NOT 458MB
 # mount -a skips what is already mounted and exits 0 when a nofail device is
 # missing, so remount this one from fstab and check it.
 UUID=$(sudo blkid -s UUID -o value /dev/nvmeXnYp1) && [ -n "$UUID" ] &&
+  n=$(awk -v d='/mnt/<label>' '$1 !~ /^#/ && $2 == d {n++} END {print n+0}' /etc/fstab) &&
+  [ "$n" = 0 ] &&   # an older entry would satisfy the remount check below
   echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab &&
   sudo umount /mnt/<label> && sudo mount /mnt/<label> &&
   [ "$(findmnt -n -o UUID --mountpoint /mnt/<label>)" = "$UUID" ] &&
@@ -855,34 +861,37 @@ the original's `netN` gives the copy the original's MAC and undoes `unique=1`.
 ```bash
 source scripts/pve-api.sh   # see its header for PVE_HOST and the two files
 node='<node>' copy='<free scratch VMID>' file='<path with known content>' expect='<the known content>'
+# expect is compared exactly: for a file ending in a newline write expect=$'text\n'
 archive='<storage>:backup/vzdump-qemu-<vmid>-<ts>.vma.zst'
 storage='<vm-storage>' pool='<pool>'   # pool='' outside Mode A-narrow
 
 # 1. Restore to a free VMID and wait.  2. Unplug every NIC, clear onboot and
 #    protection, read it back.  3. Only then start, and read the file through
 #    the guest agent (no network needed). Exit status 0 means the data matched.
-restored=
+restored= restored_id=
 if pve_task POST "/nodes/$node/qemu" \
       --data-urlencode "vmid=$copy" --data-urlencode "archive=$archive" \
       --data-urlencode "storage=$storage" --data-urlencode unique=1 \
       ${pool:+--data-urlencode "pool=$pool"} &&
    restored=$node/$copy &&
+   restored_id=$(pve_vm_identity "$node" "$copy") &&
    pve_isolate_copy "$node" "$copy" &&
    pve_task POST "/nodes/$node/qemu/$copy/status/start"
 then
   got=
   for _ in {1..60}; do
     got=$(pve_api GET "/nodes/$node/qemu/$copy/agent/file-read" -G \
-      --data-urlencode "file=$file" 2>/dev/null | jq -r '.data.content // empty') || got=
-    [[ -n $got ]] && break
+      --data-urlencode "file=$file" 2>/dev/null) &&
+      jq -es 'length == 1 and (.[0].data.content // "") != ""' >/dev/null 2>&1 <<<"$got" && break
+    got=
     sleep 5
   done
   if [[ -z $got ]]; then
     echo "nothing read from the copy: neither boot nor data is proven" >&2; false
-  elif [[ $got != "$expect" ]]; then
-    echo "MISMATCH, read from the copy: $got" >&2; false
+  elif ! jq -es --arg e "$expect" '.[0].data | .content == $e and (.truncated | not)' >/dev/null <<<"$got"; then
+    echo "MISMATCH, or only part of $file was read (content not printed)" >&2; false
   else
-    echo "data matched: $got"
+    echo "data matched: $file"
   fi
 else
   echo "restore test stopped: nothing is proven" >&2; false
@@ -891,11 +900,12 @@ fi
 
 If the restore itself failed, `$copy` may be someone else's guest: leave it
 alone. The block below runs only in the shell where the restore succeeded
-(`$restored` is set then). After the user's yes, it removes the copy and keeps
+(`$restored` is set then) and only while that ID still holds the same copy. After the user's yes, it removes the copy and keeps
 the backup:
 
 ```bash
-[[ -n ${restored:-} && $restored == "$node/$copy" ]] &&
+[[ -n ${restored:-} && $restored == "$node/$copy" && -n ${restored_id:-} ]] &&
+  now_id=$(pve_vm_identity "$node" "$copy") && [[ $now_id == "$restored_id" ]] &&
   pve_api PUT "/nodes/$node/qemu/$copy/config" --data-urlencode protection=0 >/dev/null &&
   pve_task POST "/nodes/$node/qemu/$copy/status/stop" &&
   pve_task DELETE "/nodes/$node/qemu/$copy?purge=1"
@@ -931,15 +941,17 @@ verify from the agent's side, and only then disarm. Mode A, root SSH:
 # 2. Stage and apply through the API (staged changes go to /etc/network/interfaces.new).
 # 3. Verify over the SAME path the agent uses, then disarm.
 #    jq -es, not -e: jq 1.6 exits 0 for -e on empty input.
+run=$(date +%s) &&
 ssh root@<host> 'test ! -e /etc/network/interfaces.new || { echo "pending changes exist"; exit 1; }' &&
-ssh root@<host> 'cp -a /etc/network/interfaces /root/interfaces.pre-agent &&
-  systemd-run --unit=net-revert --on-active=120 --timer-property=AccuracySec=1s \
-    /bin/sh -c "cp -a /root/interfaces.pre-agent /etc/network/interfaces && ifreload -a"' &&
+ssh root@<host> "cp -a /etc/network/interfaces /root/interfaces.pre-agent-$run &&
+  systemd-run --unit=net-revert-$run --on-active=120 --timer-property=AccuracySec=1s \
+    /bin/sh -c 'touch /root/net-reverted-$run; cp -a /root/interfaces.pre-agent-$run /etc/network/interfaces && rm -f /etc/network/interfaces.new && ifreload -a'" &&
 pve_api POST /nodes/<node>/network --data-urlencode iface=vmbr10 --data-urlencode type=bridge --data-urlencode autostart=1 &&
 pve_task PUT /nodes/<node>/network &&
 ssh -o ConnectTimeout=5 root@<host> true &&
-  pve_api GET /nodes/<node>/network/vmbr10 | jq -es 'length == 1 and .[0].data.active == 1' >/dev/null &&
-  ssh root@<host> 'systemctl stop net-revert.timer' &&
+  reply=$(pve_api GET /nodes/<node>/network/vmbr10) &&
+  jq -es 'length == 1 and .[0].data.active == 1' >/dev/null <<<"$reply" &&
+  ssh root@<host> "systemctl stop net-revert-$run.timer && test ! -e /root/net-reverted-$run" &&
   echo "applied, verified, revert disarmed"
 ```
 
@@ -963,8 +975,10 @@ sudo -n pvesh create /nodes/<node>/firewall/rules \
     --action ACCEPT --enable 1 --type in --source 192.168.50.0/24 \
     --dest 192.168.50.0/24 --dport 22 --proto tcp &&
 
-# List current rules
-sudo -n pvesh get /nodes/<node>/firewall/rules &&
+# The rule must be listed, enabled. This can't tell whether it covers the
+# address YOU connect from: check that, and arm a revert, before pasting.
+rules=$(sudo -n pvesh get /nodes/<node>/firewall/rules --output-format json) &&
+tr '}' '\n' <<<"$rules" | grep '"enable":1' | grep -qF '"source":"192.168.50.0/24"' &&
 
 # Switches live under /options. The datacenter switch is the master: node and
 # VM rules are not enforced while it is off (the default).
@@ -1303,7 +1317,7 @@ the pool actually filling, which pauses or corrupts every guest on it. Watch
 the real usage, not the sum of disk sizes:
 
 ```bash
-pve_api GET /nodes/<node>/storage/<lvmthin-storage>/status | jq '.data | {used, total}'
+reply=$(pve_api GET /nodes/<node>/storage/<lvmthin-storage>/status) && jq '.data | {used, total}' <<<"$reply"
 lvs -o lv_name,data_percent,metadata_percent <vg>    # root SSH; the pool's data% and meta%
 ```
 
@@ -1328,6 +1342,8 @@ Stop and tell the user before a write would push the pool past about 80%.
   tokens with `pveum`, including the pool-scoped least-privilege setup.
 - `runbooks/restore_test.md` — prove a VM backup through Proximo: restore a
   copy, unplug every NIC, read known data, remove the copy.
+- `runbooks/snapshot_change.md` — change a VM through Proximo: snapshot,
+  change, then keep it or prove the rollback.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 

@@ -12,6 +12,7 @@ fail=0
 check() { if [[ "$2" == "$3" ]]; then echo "PASS $1"; else echo "FAIL $1: got [$2] want [$3]"; fail=1; fi; }
 stub() { printf '#!/bin/bash\n%s\n' "$2" >"$T/bin/$1"; chmod +x "$T/bin/$1"; }
 fresh() { rm -f "$T"/bin/*; : >"$LOG"; stub sleep 'exit 0'; }
+as_agent() { sed 's/\$EUID -ne 0/1 == 1/' "$R/scripts/$1.sh" >"$T/$1.sh"; echo "$T/$1.sh"; }   # also when the tests run as root
 run() { PATH="$T/bin:$PATH" bash "$@" >"$T/out" 2>&1; }
 said() { grep -c -- "$1" "$T/out"; }
 logged() { grep -cE -- "$1" "$LOG"; }
@@ -44,6 +45,8 @@ disks() {
 *"-o TYPE /dev/zzboot"|*"-o TYPE /dev/zznew"|*"-o TYPE /dev/zzanon") echo disk;;
 *"-o TYPE /dev/zzboot3") echo part;;
 *"-o MOUNTPOINT,FSTYPE /dev/"*) echo "$USED";;
+*"-o MOUNTPOINT,LABEL /dev/zzboot") echo "/boot/efi ESP";;
+*"-o MOUNTPOINT,LABEL /dev/zznew") echo "$NEWBOOT";;
 *"-o NAME /dev/zzboot3") echo zzboot3;;
 *"-o NAME /dev/"*) echo disk; [ -z "$PARTS" ] || echo part;;
 *"/dev/zzboot") echo "zzboot 1T M";;
@@ -53,7 +56,7 @@ esac'
   stub wipefs 'echo "$SIGS" | sed "/^$/d"; exit "${SIGS_RC:-0}"'
 }
 wipe_offered() { printf '%b' "$1" | PATH="$T/bin:$PATH" bash "$T/add.sh" >"$T/out" 2>&1; said '^Aborted'; }
-export USED='' PARTS='' SIGS='' SIGS_RC=0
+export USED='' PARTS='' SIGS='' SIGS_RC=0 NEWBOOT='/ root'
 disks
 check "disk: padded boot serial still refused" "$(wipe_offered 'BOOTSERIAL\n/dev/zzboot\nno\n')" 0
 check "disk: empty boot serial refused" "$(wipe_offered '\n/dev/zznew\nno\n')" 0
@@ -73,6 +76,9 @@ check "disk: partitioned disk refused" "$(wipe_offered 'BOOTSERIAL\n/dev/zznew\n
 PARTS='' SIGS_RC=1
 check "disk: unreadable signatures refused" "$(wipe_offered 'BOOTSERIAL\n/dev/zznew\nno\n')" 0
 SIGS_RC=0
+NEWBOOT=
+check "disk: a serial that is not the boot disk's refused" "$(wipe_offered 'NEWSERIAL\n/dev/zzboot\nno\n'; said 'not the boot')" $'0\n1'
+NEWBOOT='/ root'
 check "disk: candidates leave out only the boot drive" "$(wipe_offered 'BOOTSERIAL\n/dev/zznew\nno\n' >/dev/null; sed -n '/^Candidate drives/,/^$/p' "$T/out" | grep -oE 'zzboot|zznew' | tr -d '\n')" zznew
 check "disk: a good target is still offered" "$(wipe_offered 'BOOTSERIAL\n/dev/zznew\nno\n')" 1
 
@@ -90,7 +96,9 @@ partition_run 'exit 0' 'echo 1111-2222' 1 store
 check "disk: a broken fstab line is not 'verified'" "$(said 'mounts verified')" 0
 check "disk: a broken fstab line is not registered" "$(logged '^pvesm add')" 0
 check "disk: a broken fstab line is taken out again" "$(grep -c UUID "$T/fstab")" 0
-partition_run 'exit 0' 'case "$*" in *p2) exit 2;; esac; echo 1111-2222' 2 'one two'
+partition_run 'exit 0' 'echo 1111-2222' 1 store
+check "disk: a name without a digit gets no 'p'" "$(said 'mkfs.ext4 -L store /dev/zznew1$')" 1
+partition_run 'exit 0' 'case "$*" in *2) exit 2;; esac; echo 1111-2222' 2 'one two'
 check "disk: unreadable second partition leaves fstab as it was" "$(grep -c UUID "$T/fstab")" 0
 
 ## pve_api and pve_wait
@@ -100,6 +108,13 @@ echo token >"$T/tok"; echo pin >"$T/pin"
 (export PVE_HOST=h PVE_TOKEN_FILE=$T/tok PVE_PIN_FILE=$T/pin PATH=$T/bin:$PATH
   source "$R/scripts/pve-api.sh"; pve_api POST /x >/dev/null 2>&1)
 check "pve_api: refused write is non-zero" "$(nonzero $?)" yes
+fresh
+stub curl 'echo "$*" >>"$LOG"'
+echo SECRETTOKEN >"$T/tok"
+(export PVE_HOST=h PVE_TOKEN_FILE=$T/tok PVE_PIN_FILE=$T/pin PATH=$T/bin:$PATH
+  source "$R/scripts/pve-api.sh"; pve_api GET /x >/dev/null 2>&1)
+check "pve_api: token is not in curl's arguments" "$(logged SECRETTOKEN)" 0
+check "pve_api: requests have a timeout" "$(logged '--max-time')" 1
 
 # jq 1.6 (Debian 12, Ubuntu 22.04) exits 0 for -e on empty input.
 fresh
@@ -145,7 +160,7 @@ check "removal: nothing sent unless this restore succeeded" "$(logged '^api')" 0
 NET='pve_api() { echo "api $*" >>"$LOG"; [[ $FAILS == *"$1"* ]] && { echo "{\"data\":null}"; return 22; }; echo "{\"data\":{\"active\":1}}"; }
 pve_task() { echo "api $*" >>"$LOG"; [[ $FAILS != *"$1"* ]]; }
 pve_wait() { [[ $FAILS != *PUT* ]]; }
-ssh() { echo "ssh $*" >>"$LOG"; case "$*" in *interfaces.new*) [[ $FAILS != *pending* ]];; *systemd-run*) [[ $FAILS != *arm* ]];; esac; }'
+ssh() { echo "ssh $*" >>"$LOG"; case "$*" in *systemd-run*) [[ $FAILS != *arm* ]];; *interfaces.new*) [[ $FAILS != *pending* ]];; esac; }'
 fresh; doc SKILL.md 'net-revert' "FAILS=pending; $NET"
 check "network: pending changes stop the apply" "$(logged '^api (POST|PUT)')" 0
 fresh; doc SKILL.md 'net-revert' "FAILS=arm; $NET"
@@ -158,8 +173,13 @@ pve_api() { [[ \$1 != GET ]] && echo '{\"data\":null}'; return 0; }"
 check "network: empty verify keeps the revert on jq 1.6" "$(logged 'stop net-revert')" 0
 fresh; doc SKILL.md 'net-revert' "FAILS=; $NET"
 check "network: good run still disarms" "$(logged 'stop net-revert')" 1
+fresh; doc SKILL.md 'net-revert' "FAILS=; $NET
+ssh() { echo \"ssh \$*\" >>\"\$LOG\"; case \"\$*\" in *'systemctl stop'*) return 1;; esac; }"; rc=$?
+check "network: a revert that fired is not 'disarmed'" "$(nonzero $rc)" yes
+check "network: snapshot and timer are per run" "$(block SKILL.md 'net-revert' | grep -c 'interfaces.pre-agent[^-]\|unit=net-revert ')" 0
+check "network: revert clears the staged file" "$(block SKILL.md 'net-revert' | grep -c 'rm -f /etc/network/interfaces.new')" 1
 
-READS='pve_api() { case "$*" in *file-read*) echo "$GOT";; *) echo "{\"data\":\"UPID:x\"}";; esac; }
+READS='pve_vm_identity() { echo id; }; pve_api() { case "$*" in *file-read*) echo "$GOT";; *) echo "{\"data\":\"UPID:x\"}";; esac; }
 pve_task() { return 0; }; pve_wait() { return 0; }; pve_isolate_copy() { return 0; }'
 fresh; doc SKILL.md 'pve_isolate_copy "$node"' "GOT=; $READS"; rc=$?
 check "restore: unread data exits non-zero" "$(nonzero $rc)" yes
@@ -167,6 +187,11 @@ fresh; doc SKILL.md 'pve_isolate_copy "$node"' "GOT='{\"data\":{\"content\":\"so
 check "restore: wrong data exits non-zero" "$(nonzero $rc)" yes
 fresh; doc SKILL.md 'pve_isolate_copy "$node"' "GOT='{\"data\":{\"content\":\"X\"}}'; $READS"; rc=$?
 check "restore: matching data exits zero" "$(nonzero $rc)" no
+check "restore: the file is not printed" "$(block SKILL.md 'pve_isolate_copy "$node"' | grep -c 'echo.*[$]got')" 0
+fresh; doc SKILL.md 'pve_isolate_copy "$node"' "GOT='{\"data\":{\"content\":\"X\\n\"}}'; $READS"; rc=$?
+check "restore: a different final newline is not a match" "$(nonzero $rc)" yes
+fresh; doc SKILL.md 'pve_isolate_copy "$node"' "GOT='{\"data\":{\"content\":\"X\",\"truncated\":true}}'; $READS"; rc=$?
+check "restore: a cut file is not a match" "$(nonzero $rc)" yes
 
 fresh
 stub blkid 'exit 2'; stub sudo '[ "$1" != tee ] || { echo "sudo $*" >>"$LOG"; exit 0; }; exec "$@"'; stub mount 'exit 0'; stub df 'exit 0'; stub findmnt 'exit 1'
@@ -177,11 +202,18 @@ fresh
 stub curl 'exit 22'; stub uv 'echo "uv $*" >>"$LOG"'
 doc references/mcp-servers.md 'uv tool install' ''
 check "provenance: failed check installs nothing" "$(logged '^uv ')" 0
+fresh
+stub curl 'echo "{\"attestation_bundles\":[{\"publisher\":{\"repository\":\"john-broadway/proximo\",\"workflow\":\"release-pypi.yml\"}}]}"; exit 18'
+stub uv 'echo "uv $*" >>"$LOG"'
+doc references/mcp-servers.md 'uv tool install' ''
+check "provenance: a cut transfer installs nothing" "$(logged '^uv ')" 0
 
 fresh
 stub curl 'echo "{\"data\":null}"; case " $* " in *" --fail-with-body "*) exit 22;; esac; exit 0'
 doc references/proxmox-api-token.md '-X POST' 'cat() { echo x; }'; rc=$?
+grep -c -- '-H "\$AUTH"\|-H "Authorization' "$R/references/proxmox-api-token.md" >"$T/argv"
 check "token reference: refused create is non-zero" "$(nonzero $rc)" yes
+check "token reference: token is not in curl's arguments" "$(sed -n 1p "$T/argv")" 0
 
 fresh
 stub pvesh 'echo "not json"; exit 1'
@@ -224,6 +256,7 @@ stub cp 'mkdir -p "$DST/template/iso"; echo BBBB >"$DST/template/iso/a.iso"'
 stub pvesm 'exit 0'
 echo y | SRC=$T/src DST=$T/dst PATH="$T/bin:$PATH" bash "$T/iso.sh" /dev/zz "$T/dst" >"$T/out" 2>&1; rc=$?
 check "iso: same size, different bytes is not verified" "$(nonzero $rc)" yes
+check "iso: that test reached the copy" "$([[ -e $T/dst/template/iso/a.iso ]] && echo yes)" yes
 
 fresh
 stub visudo 'exit 0'; stub chown 'exit 0'; stub id 'exit 0'
@@ -247,8 +280,13 @@ check "clone 4b: refused clone stops resize and start" "$(logged 'resize|/config
 fresh; doc SKILL.md '# 4b.' "$OK"
 check "clone 4b: good run starts" "$(logged 'status/start')" 1
 fresh; doc SKILL.md '?purge=1' "$OK
-node=n copy=100 restored=n/100"
+node=n copy=100 restored=n/100 restored_id=same
+pve_vm_identity() { echo same; }"
 check "removal: good run deletes" "$(logged '^api DELETE')" 1
+fresh; doc SKILL.md '?purge=1' "$OK
+node=n copy=100 restored=n/100 restored_id=same
+pve_vm_identity() { echo replaced; }"
+check "removal: a replacement at the same id is not deleted" "$(logged '^api')" 0
 fresh; doc SKILL.md '?purge=1' "$OK
 node=n copy=100 restored=n/8100"
 check "removal: another id is not deleted" "$(logged '^api')" 0
@@ -323,7 +361,9 @@ chain() { # FILE MARKER NAME
   for c in $WRITERS; do stub "$c" "echo $c >>\"\$LOG\"; exit 1"; done
   stub pvesm '[ "$1" != add ] || { echo pvesm >>"$LOG"; exit 1; }'
   stub pvesh 'case "$1" in create|set) echo pvesh >>"$LOG"; exit 1;; esac'
+  stub qm 'if [ "$1" = config ]; then echo "net0: virtio=X,bridge=vmbr0"; echo "smbios1: uuid=X"; else echo qm >>"$LOG"; exit 1; fi'
   stub findmnt 'exit 1'; stub mountpoint 'exit 0'; stub find 'exit 1'
+  echo "smbios1: uuid=X" >"$T/vm100.id"; echo "smbios1: uuid=X" >"$T/vm103.id"
   doc "$1" "$2" ''
   check "chain: $3" "$([[ $(logged .) == 1 ]] && echo stops || echo "writes: $(logged .)")" stops
 }
@@ -382,7 +422,7 @@ for s in proxmox-status cluster-info; do
   for c in uptime free df lsblk; do stub "$c" 'echo ok'; done
   for c in pvesh pvesm qm pct pvecm ha-manager journalctl; do stub "$c" '[ -n "$AS_ROOT" ] || exit 1; echo ok'; done
   stub sudo '[ "$1" = -n ] && shift; export AS_ROOT=1; case "$1" in pvecm) exit 1;; esac; exec "$@"'
-  run "$R/scripts/$s.sh"
+  run "$(as_agent "$s")"
   check "$s: works as the agent user through the allowlist" "$?" 0
 done
 
@@ -401,17 +441,22 @@ iso_run() {
   stub mountpoint 'exit 0'
   stub findmnt 'case "$*" in "-no SOURCE /") echo boot;; *"-no SOURCE"*) echo data;; *"-no TARGET"*) echo "$SRC";; esac; exit 0'
   stub pvesm "$1"
+  stub cp 'mkdir -p "$DST/template/iso"; echo AAAA >"$DST/template/iso/a.iso"'
   [[ -z $2 ]] || stub find "$2"
   echo y | SRC=$T/src DST=$T/dst PATH="$T/bin:$PATH" bash "$T/iso.sh" /dev/zz "$T/dst" >"$T/out" 2>&1
 }
 iso_run 'exit 0' "printf '%s\\0' \"$T/src/a.iso\"; exit 1"; rc=$?
 check "iso: partly unreadable source is non-zero" "$(nonzero $rc)" yes
+check "iso: it stopped on the unreadable source, not earlier" "$(said 'could not read all')" 1
 iso_run 'exit 1' ''; rc=$?
 check "iso: failed storage listing is non-zero" "$(nonzero $rc)" yes
+check "iso: that test reached the copy of a readable file" "$([[ -e $T/dst/template/iso/a.iso ]] && echo yes)" yes
+iso_run 'exit 0' ''; rc=$?
+check "iso: control, all working exits zero" "$rc" 0
 
 for g in '100 qm set 100 --boot order=scsi0' '103 --ide3 iso:iso/virtio-win'; do
   fresh
-  stub qm 'if [ "$1" = config ]; then echo "name: someone-elses"; else echo "qm $*" >>"$LOG"; fi'
+  stub qm 'if [ "$1" = config ]; then echo "name: ubuntu-server"; echo "name: windows-11"; echo "smbios1: uuid=SOMEONE-ELSE"; else echo "qm $*" >>"$LOG"; fi'
   doc references/vm-creation-cheatsheet.md "${g#* }" ''
   check "cheatsheet: another guest at ${g%% *} is not edited" "$(logged '^qm set')" 0
 done
@@ -440,12 +485,12 @@ doc SKILL.md 'rm token-response.json' "cd '$T'; PIN="; rc=$?
 check "bootstrap: empty pin is non-zero" "$(nonzero $rc)" yes
 
 fresh
-stub scp 'exit 1'; stub ssh 'echo ssh >>"$LOG"'
+stub scp 'exit 1'; stub ssh 'case "$*" in *mktemp*) echo /staging;; *) echo ssh >>"$LOG";; esac'
 doc README.md 'sshd -t && systemctl reload ssh' ''
 check "sshd step: failed copy reloads nothing" "$(logged '^ssh')" 0
 fresh
-stub scp 'exit 1'; stub ssh 'echo ssh >>"$LOG"'
-doc README.md 'bash /tmp/install-sudoers.sh' ''
+stub scp 'exit 1'; stub ssh 'case "$*" in *mktemp*) echo /staging;; *) echo ssh >>"$LOG";; esac'
+doc README.md 'install-sudoers.sh"' ''
 check "sudoers step: failed copy runs nothing" "$(logged '^ssh')" 0
 
 # PVE creates a rule disabled unless told otherwise (measured).
@@ -456,6 +501,66 @@ check "firewall: every rule a recipe creates is enabled" "$n" 0
 dl=$(grep -n 'storage/local/download-url' "$R/SKILL.md" | cut -d: -f1)
 put=$(grep -n 'content=vztmpl,iso,import' "$R/SKILL.md" | cut -d: -f1)
 check "template: import is enabled before the download" "$((put < dl))" 1
+
+fresh
+stub sudo '[ "$1" = -n ] && shift; exec "$@"'; stub pvesh 'exit 0'
+stub qm 'if [ "$1" = config ]; then echo "net0: virtio=X,bridge=vmbr0,tag=30,link_down=1"; else echo "qm $*" >>"$LOG"; fi'
+doc references/firewall-basics.md '# Datacenter: the master switch' ''
+check "firewall: turning it on keeps VLAN and link state" "$(logged 'tag=30,link_down=1,firewall=1')" 1
+
+fresh
+stub sudo '[ "$1" = -n ] && shift; exec "$@"'
+stub pvesh 'echo "pvesh $*" >>"$LOG"; [ "$1" != get ] || echo "[]"'
+doc SKILL.md 'Add a rule to allow SSH' ''
+check "firewall: not switched on without the rule in the list" "$(logged 'options --enable 1')" 0
+fresh
+stub sudo '[ "$1" = -n ] && shift; exec "$@"'
+stub pvesh 'echo "pvesh $*" >>"$LOG"; [ "$1" != get ] || echo "[{\"action\":\"ACCEPT\",\"enable\":1,\"source\":\"192.168.50.0/24\"}]"'
+doc SKILL.md 'Add a rule to allow SSH' ''
+check "firewall: good run switches on" "$([[ $(logged 'options --enable 1') -ge 1 ]] && echo yes)" yes
+check "firewall: no write to a path with no set" "$(grep -E 'pvesh set [^ ]*/firewall( |$)' "$R/references/firewall-basics.md" | grep -vc "No 'set'\|without\|^Every switch")" 0
+check "firewall: group is attached as a rule" "$(grep -c -- '--type group --action web-tier' "$R/references/firewall-basics.md")" 1
+
+check "storage: no forced pool on a guessable device" "$(cat "$R/SKILL.md" "$R"/references/*.md | grep -cE 'zpool create -f|zpool create .*/dev/(nvme|sd)')" 0
+
+fresh
+stub sudo '[ "$1" = -n ] && shift; exec "$@"'; stub umount 'exit 0'; stub findmnt 'exit 127'; stub awk 'exit 2'
+doc references/iso-workflow.md 'Always umount' ''; rc=$?
+check "unplug: a failed mount lookup is non-zero" "$(nonzero $rc)" yes
+
+fresh
+for c in pvesh pvesm journalctl; do stub "$c" 'echo ok'; done
+stub sudo '[ "$1" = -n ] && shift; exec "$@"'
+stub ha-manager '[ "$1" != rules ] || { echo "500 cannot read rules"; exit 1; }; echo ok'
+run "$R/scripts/cluster-info.sh"; rc=$?
+check "cluster-info: failed HA rules read is non-zero" "$(nonzero $rc)" yes
+stub ha-manager '[ "$1" != rules ] || { echo "ERROR: unknown command"; exit 1; }; echo ok'
+run "$R/scripts/cluster-info.sh"
+check "cluster-info: PVE 8 without rules still passes" "$?" 0
+
+fresh
+stub install ': >"${@: -1}"'
+echo old-token >"$T/.config/pve/X.token"
+echo '{"data":{"full-tokenid":"","value":""}}' >"$T/token-response.json"
+doc SKILL.md 'rm token-response.json' "cd '$T'; PIN=x"; rc=$?
+check "bootstrap: empty fields are non-zero" "$(nonzero $rc)" yes
+check "bootstrap: a failed save keeps the old token" "$(cat "$T/.config/pve/X.token")" old-token
+fresh
+stub openssl 'cat >/dev/null 2>&1; case "$1" in pkey) exit 1;; esac; echo key'
+stub curl 'echo curl >>"$LOG"'
+doc SKILL.md 'access/ticket' 'H=h; PWFILE=f'
+check "bootstrap: unconvertible key, no pin, no password sent" "$(logged '^curl')" 0
+
+fresh
+echo "UUID=old X ext4 defaults 0 2" >"$T/fstab2"
+stub blkid 'echo 1111'; stub umount 'exit 0'; stub sudo '[ "$1" != tee ] || { echo "sudo $*" >>"$LOG"; exit 0; }; exec "$@"'
+stub mount 'exit 0'; stub findmnt 'echo 1111'; stub df 'echo mounted'
+stub awk 'echo 1'
+doc SKILL.md 'UUID=$(' ''; rc=$?
+check "fstab: an existing entry for that path is refused" "$(nonzero $rc) $(logged 'tee -a')" "yes 0"
+
+check "readme: installers are not staged in shared /tmp" "$(grep -c 'root@<proxmox-host>:/tmp/\|:/etc/ssh/sshd_config.d/' "$R/README.md")" 0
+check "runbooks: both are listed" "$(grep -c 'runbooks/snapshot_change.md' "$R/SKILL.md" | head -1)" 2
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
 exit $fail

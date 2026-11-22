@@ -71,14 +71,15 @@ need it. List the current privileges of a role with
 
 ```bash
 H=https://pve.example.com:8006
-AUTH="Authorization: $(cat ~/.config/pve/pve.token)"
+# The header goes through a file descriptor, so the token is not in curl's arguments.
+auth() { printf 'Authorization: %s\n' "$(cat ~/.config/pve/pve.token)"; }
 
 # List VMs
-curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H @<(auth) \
     "$H/api2/json/cluster/resources?type=vm"
 
 # Create a VM (form-encoded, as the web UI does)
-curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" -X POST \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H @<(auth) -X POST \
     "$H/api2/json/nodes/<node>/qemu" \
     --data-urlencode vmid=8100 --data-urlencode name=test \
     --data-urlencode memory=2048 --data-urlencode cores=2

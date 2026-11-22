@@ -50,7 +50,9 @@ Proximo with a read-only token and a pool-scoped write token
 - Failed, empty or cut checks no longer read as success, in the helpers,
   scripts and recipes. `pve_api` now returns non-zero when Proxmox refuses
   (needs curl 7.76+).
-- The same procedure as a Proximo runbook: `runbooks/restore_test.md`.
+- The same procedure as a Proximo runbook: `runbooks/restore_test.md`, and a
+  second one to change a VM with a snapshot to fall back on:
+  `runbooks/snapshot_change.md`.
 - Proximo notes re-measured on 0.56.0.
 
 ## What was new in 1.5.0
@@ -209,8 +211,9 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
 3. **Create the user and install the sudoers file** (on the Proxmox host as
    root; the script creates `zen-agent` with a locked password):
    ```bash
-   scp templates/zen-agent-sudoers templates/install-sudoers.sh root@<proxmox-host>:/tmp/ &&
-   ssh root@<proxmox-host> 'bash /tmp/install-sudoers.sh'
+   D=$(ssh root@<proxmox-host> 'mktemp -d') && [ -n "$D" ] &&
+   scp templates/zen-agent-sudoers templates/install-sudoers.sh "root@<proxmox-host>:$D/" &&
+   ssh root@<proxmox-host> "bash $D/install-sudoers.sh"
    ```
 
 4. **Install the public key, locked to the agent's source IP.** The account
@@ -228,8 +231,12 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
 
 5. **Install the sshd Match block** (key-only auth, no forwarding):
    ```bash
-   scp templates/99-zen-agent-sshd.conf root@<proxmox-host>:/etc/ssh/sshd_config.d/ &&
-   ssh root@<proxmox-host> 'sshd -t && systemctl reload ssh'
+   # Refuses to replace an existing drop-in, and takes the new one out if sshd rejects it.
+   D=$(ssh root@<proxmox-host> 'mktemp -d') && [ -n "$D" ] &&
+   scp templates/99-zen-agent-sshd.conf "root@<proxmox-host>:$D/" &&
+   ssh root@<proxmox-host> "C=/etc/ssh/sshd_config.d/99-zen-agent-sshd.conf; test ! -e \$C &&
+     install -m 644 $D/99-zen-agent-sshd.conf \$C &&
+     { sshd -t && systemctl reload ssh || { rm \$C; exit 1; }; }"
    ```
 
 6. **Final verification:**
@@ -277,7 +284,8 @@ proxmox-manager-agent-skill/
 │   ├── install-sudoers.sh      Install + validate the sudoers file
 │   └── proximo-token-setup.sh  Read + pool-scoped write tokens for an MCP server
 ├── runbooks/
-│   └── restore_test.md         Prove a VM backup, as a Proximo operator runbook
+│   ├── restore_test.md         Prove a VM backup, as a Proximo operator runbook
+│   └── snapshot_change.md      Change a VM with a snapshot to fall back on
 └── tests/
     ├── checks.test.sh          Offline test: a failed check never reads as success
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh

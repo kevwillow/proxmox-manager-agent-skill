@@ -37,6 +37,12 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
   - The cluster "tag all" loop is gone: it never worked, and fixed it would
     have overwritten every guest's tags.
 - The `proximo arm` notes now describe the ticket login (0.52+).
+- `runbooks/snapshot_change.md`: change a VM with a snapshot to fall back on,
+  as a Proximo operator runbook. Every path run on Proximo 0.56.0.
+- **Safety:** the restore test needs an accepted write and a matching
+  read-back before it starts the copy, compares the file exactly, and removes
+  the copy only while that ID still holds it. The API token is no longer in
+  curl's arguments, and requests time out.
 - `runbooks/restore_test.md`: the same test as a Proximo operator runbook,
   installed by `install.sh`.
 - Corrected for 0.56.0: `proximo-core` needs `--confirm` to change anything;
