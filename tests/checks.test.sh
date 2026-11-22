@@ -566,6 +566,9 @@ check "network: run id is unique within a second" "$(block SKILL.md 'net-revert'
 check "network: a running revert is not 'disarmed'" "$(block SKILL.md 'net-revert' | grep -c 'is-active net-revert')" 1
 check "runbook: the copy's identity is re-read before delete" "$(grep -c "Re-read step 4's" "$R/runbooks/restore_test.md")" 1
 check "runbook: snapshot name is unique" "$(grep -c 'unique new' "$R/runbooks/snapshot_change.md")" 1
+check "runbooks: the dev VM one is listed" "$(grep -c 'runbooks/clone_dev_vm.md' "$R/SKILL.md" | head -1)" 2
+check "runbook: dev VM identity is re-read before delete" "$(grep -c "re-read step 3's fields, stop unless unchanged" "$R/runbooks/clone_dev_vm.md")" 1
+check "runbook: dev VM never reads the cut address list" "$(grep -c 'network-get-interfaces' "$R/runbooks/clone_dev_vm.md")" 0
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
 exit $fail

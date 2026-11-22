@@ -52,7 +52,8 @@ Proximo with a read-only token and a pool-scoped write token
   (needs curl 7.76+).
 - The same procedure as a Proximo runbook: `runbooks/restore_test.md`, and a
   second one to change a VM with a snapshot to fall back on:
-  `runbooks/snapshot_change.md`.
+  `runbooks/snapshot_change.md`, and a third to build a dev VM from a
+  cloud-init template: `runbooks/clone_dev_vm.md`.
 - Proximo notes re-measured on 0.56.0.
 
 ## What was new in 1.5.0
@@ -284,6 +285,7 @@ proxmox-manager-agent-skill/
 │   ├── install-sudoers.sh      Install + validate the sudoers file
 │   └── proximo-token-setup.sh  Read + pool-scoped write tokens for an MCP server
 ├── runbooks/
+│   ├── clone_dev_vm.md         Build a dev VM from a cloud-init template
 │   ├── restore_test.md         Prove a VM backup, as a Proximo operator runbook
 │   └── snapshot_change.md      Change a VM with a snapshot to fall back on
 └── tests/

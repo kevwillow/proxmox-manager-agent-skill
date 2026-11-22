@@ -39,6 +39,9 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
 - The `proximo arm` notes now describe the ticket login (0.52+).
 - `runbooks/snapshot_change.md`: change a VM with a snapshot to fall back on,
   as a Proximo operator runbook. Every path run on Proximo 0.56.0.
+- `runbooks/clone_dev_vm.md`: build a dev VM from a cloud-init template
+  (full clone, user and key, boot, cloud-init proven by the guest's hostname).
+  Every path run on Proximo 0.56.0, and the login checked by SSH.
 - **Safety:** the restore test needs an accepted write and a matching
   read-back before it starts the copy, compares the file exactly, and removes
   the copy only while that ID still holds it. The API token is no longer in

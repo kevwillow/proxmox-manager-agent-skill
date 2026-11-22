@@ -55,7 +55,8 @@ guest in place, where the old identity is wanted. With Proximo,
 work disarmed and let the user run `proximo arm` when a change is needed.
 Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
 For a restore test through Proximo, follow `runbooks/restore_test.md`; before
-changing a VM through it, follow `runbooks/snapshot_change.md`.
+changing a VM through it, follow `runbooks/snapshot_change.md`; to build a
+dev VM from a cloud-init template, follow `runbooks/clone_dev_vm.md`.
 
 ## When to Use
 
@@ -1345,6 +1346,8 @@ Stop and tell the user before a write would push the pool past about 80%.
   copy, unplug every NIC, read known data, remove the copy.
 - `runbooks/snapshot_change.md` — change a VM through Proximo: snapshot,
   change, then keep it or prove the rollback.
+- `runbooks/clone_dev_vm.md` — build a dev VM through Proximo: full clone of
+  a cloud-init template, user and key, boot, prove cloud-init ran.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 

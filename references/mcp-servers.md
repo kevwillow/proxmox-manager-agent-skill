@@ -133,8 +133,11 @@ The same engine runs from a shell: `proximo-core pve GET /cluster/resources`.
 A mutation there runs only with `--confirm`; without it the plan is printed and
 the exit code is 3 (an explicit `--plan` exits 0). Read `--plan` first, then repeat the call with `--confirm`.
 
-For a restore test follow `runbooks/restore_test.md`, and for a change to a VM
-`runbooks/snapshot_change.md`. To have Proximo serve them as prompts, point `PROXIMO_RUNBOOKS_DIR` at that folder.
+For a restore test follow `runbooks/restore_test.md`, for a change to a VM
+`runbooks/snapshot_change.md`, and for a new dev VM `runbooks/clone_dev_vm.md`.
+Through Proximo the guest agent's network-get-interfaces answer is cut on a
+normal guest (its one `result` key is over the 1152-byte read cap, measured on
+0.56.0), so take a DHCP address from the DHCP server or give a static one. To have Proximo serve them as prompts, point `PROXIMO_RUNBOOKS_DIR` at that folder.
 
 ## Gotchas (measured)
 
