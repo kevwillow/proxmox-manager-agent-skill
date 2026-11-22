@@ -2,7 +2,7 @@
 
 Common `qm create` invocations for typical homelab VMs. All assume
 an ISO storage pool named `iso` and a VM disk storage pool named
-`vmdata` (or whichever you registered with `pvesm add dir`).
+`data` (or whichever you registered with `pvesm add dir`).
 
 ## General command shape
 
@@ -35,7 +35,7 @@ qm create 100 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:32,format=qcow2 \
+    --scsi0 data:32,format=qcow2 \
     --ide2 iso:iso/ubuntu-24.04.2-live-server-amd64.iso,media=cdrom \
     --boot order=ide2 \
     --agent enabled=1 &&
@@ -64,7 +64,7 @@ qm create 101 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:32,format=qcow2 \
+    --scsi0 data:32,format=qcow2 \
     --ide2 iso:iso/debian-12.5.0-amd64-netinst.iso,media=cdrom \
     --boot order=ide2 \
     --agent enabled=1
@@ -89,8 +89,8 @@ qm create 102 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:0,import-from=/root/noble-server-cloudimg-amd64.img \
-    --ide2 vmdata:cloudinit \
+    --scsi0 data:0,import-from=/root/noble-server-cloudimg-amd64.img \
+    --ide2 data:cloudinit \
     --boot order=scsi0 \
     --serial0 socket --vga serial0 \
     --agent enabled=1 \
@@ -122,12 +122,12 @@ qm create 103 \
     --cores 4 \
     --net0 virtio,bridge=vmbr0 \
     --ostype win11 \
-    --scsi0 vmdata:64,format=qcow2 \
+    --scsi0 data:64,format=qcow2 \
     --ide2 iso:iso/Win11_23H2_English_x64v1.iso,media=cdrom \
     --boot order=ide2 \
     --bios ovmf \
-    --efidisk0 vmdata:1,format=qcow2 \
-    --tpmstate0 vmdata:1,version=v2.0 \
+    --efidisk0 data:1,format=qcow2 \
+    --tpmstate0 data:1,version=v2.0 \
     --machine pc-q35-8.1 \
     --agent enabled=1 &&
   qm config 103 | grep '^smbios1:' > ~/vm103.id   # marks it as ours for the edit below
@@ -159,7 +159,7 @@ pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
     --memory 1024 \
     --cores 2 \
     --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-    --rootfs vmdata:16 \
+    --rootfs data:16 \
     --features nesting=1 \
     --unprivileged 1 \
     --password <bcrypt-or-plaintext> \
@@ -181,7 +181,7 @@ qm resize <vmid> scsi0 +10G
 qm set <vmid> --net1 virtio,bridge=vmbr0,tag=10
 
 # Add a data disk on a different storage pool
-qm set <vmid> --scsi1 vmdata2a:100
+qm set <vmid> --scsi1 data2:100
 
 # Snapshot before a risky change
 qm snapshot <vmid> before-upgrade

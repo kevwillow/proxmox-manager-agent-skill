@@ -780,7 +780,7 @@ sudo -n pct create <ctid> local:vztmpl/<template-name> \
     --memory 1024 \
     --cores 2 \
     --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-    --rootfs vmdata:16 \
+    --rootfs local-lvm:16 \
     --features nesting=1 \
     --unprivileged 1 \
     --ssh-public-keys /root/agent.pub \
@@ -1113,7 +1113,7 @@ NVMe device numbers (`/dev/nvme0n1`, `/dev/nvme1n1`, ...) are assigned by
 kernel discovery order and shuffle across reboots. `/etc/fstab` entries
 using `/dev/nvmeXnYp1` will silently point at the wrong drive after reboot
 — the mount succeeds but the wrong filesystem is at the mount point.
-Symptom: `/mnt/iso` shows contents that should be at `/mnt/vmdata`, or
+Symptom: `/mnt/iso` shows contents that should be at `/mnt/data`, or
 vice versa.
 
 Fix: rewrite `/etc/fstab` entries using `UUID=` or `LABEL=` (stable across
@@ -1238,8 +1238,8 @@ rollback fails. Always verify the snapshot's backing storage path with
 ### 17. `qm migrate` to another node fails with "local storage not available on target"
 
 The target node needs to have the same storage ID defined locally. The
-common homelab case is a single-node setup with `local-lvm` and
-`vmdata` — these don't exist on other nodes unless the cluster is
+common homelab case is a single-node setup with `local-lvm` and an
+extra storage such as `data` — these don't exist on other nodes unless the cluster is
 explicitly set up that way. For a single-node homelab, `qm migrate` is
 not useful; for migration to work, the target must have the same storage
 configured.

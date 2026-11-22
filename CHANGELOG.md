@@ -37,6 +37,8 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
   - The cluster "tag all" loop is gone: it never worked, and fixed it would
     have overwritten every guest's tags.
 - The `proximo arm` notes now describe the ticket login (0.52+).
+- Examples use stock storage names (`local-lvm`, `local`) or neutral ones
+  (`data`), and the token setup starts with an empty template list.
 - `runbooks/snapshot_change.md`: change a VM with a snapshot to fall back on,
   as a Proximo operator runbook. Every path run on Proximo 0.56.0.
 - `runbooks/clone_dev_vm.md`: build a dev VM from a cloud-init template

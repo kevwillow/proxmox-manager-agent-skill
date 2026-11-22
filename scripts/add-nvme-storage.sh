@@ -119,13 +119,13 @@ if [[ "$PARTITION_COUNT" != "1" && "$PARTITION_COUNT" != "2" ]]; then
 fi
 
 echo
-read -p "Mount point prefix (e.g. /mnt/vmdata): " MOUNT_PREFIX
+read -p "Mount point prefix (e.g. /mnt/data): " MOUNT_PREFIX
 if [[ ! "$MOUNT_PREFIX" =~ ^/mnt/ ]]; then
     echo "ERROR: mount point must start with /mnt/"
     exit 1
 fi
 
-read -p "Proxmox storage names (space-separated, e.g. 'vmdata2a vmdata2b'): " PVE_NAMES_RAW
+read -p "Proxmox storage names (space-separated, e.g. 'data-a data-b'): " PVE_NAMES_RAW
 read -ra PVE_STORAGE_NAMES <<< "$PVE_NAMES_RAW"
 if [[ "${#PVE_STORAGE_NAMES[@]}" != "$PARTITION_COUNT" ]]; then
     echo "ERROR: need $PARTITION_COUNT storage name(s), got ${#PVE_STORAGE_NAMES[@]}"

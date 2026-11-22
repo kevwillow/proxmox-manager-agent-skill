@@ -46,16 +46,16 @@
 #   move or destroy the guests in pool agent, then: pveum pool delete agent
 #   pvesh set /pools/templates --vms <ids> --delete 1; pveum pool delete templates
 #
-# Tested on PVE 9.2.2 (2026-10-23) with Proximo 0.46.2, templates 9000-9015,
-# storages vmdata and shared, bridge vmbr0: clone/snapshot/backup/restore/delete
+# Tested on PVE 9.2.2 (2026-10-23) with Proximo 0.46.2, a list of templates,
+# a VM-disk storage, a backup storage and bridge vmbr0: clone/snapshot/backup/restore/delete
 # inside the pool worked; a clone outside the pool returned 403.
 set -euo pipefail
 umask 077
 
 # --- Settings: edit these ---
-TEMPLATE_IDS="$(seq -s, 9000 9015)"   # comma-separated VMIDs of the templates to allow cloning (may be empty)
-VM_STORAGE=vmdata                     # where new guests' disks go
-BACKUP_STORAGE=shared                 # where backups go
+TEMPLATE_IDS=""                       # comma-separated VMIDs of the templates to allow cloning, e.g. "9000,9001" (may be empty)
+VM_STORAGE=local-lvm                  # where new guests' disks go
+BACKUP_STORAGE=local                  # where backups go
 BRIDGE=vmbr0                          # the bridge guests attach to
 WRITE_EXPIRE_HOURS=0                  # whole hours; 0 = never. Proximo recommends an expiry on the write token
 

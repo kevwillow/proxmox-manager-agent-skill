@@ -64,7 +64,7 @@ sudo -n vgcreate vg-data /dev/nvme1n1p1 &&
 sudo -n lvcreate -L 100%FREE -T vg-data/thin-data &&
 
 # Register with Proxmox
-sudo -n pvesm add lvmthin vmdata-lvmthin \
+sudo -n pvesm add lvmthin data-lvmthin \
     --vgname vg-data \
     --thinpool thin-data \
     --content images,rootdir

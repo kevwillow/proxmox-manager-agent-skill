@@ -182,7 +182,7 @@ normal guest (its one `result` key is over the 1152-byte read cap, measured on
   delete was refused because Proximo could not read the record first. Only
   root could remove it.
 - **A volume id goes in the path with `/` as `%2F`**
-  (`shared:backup%2Fvzdump-...`); a literal `/` is refused as an unknown path.
+  (`<storage>:backup%2Fvzdump-...`); a literal `/` is refused as an unknown path.
 - **Deleting the token user leaves ACL lines behind.** `pveum user delete`
   with tokens still present left their ACL lines in `/etc/pve/user.cfg` (PVE
   logs `ignore invalid acl token`), and their secrets stayed in
