@@ -10,6 +10,7 @@
 #   upid=$(pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=8100 | jq -r .data)
 #   pve_wait "$upid" 300 || echo "clone failed"
 #   pve_vm_ip <node> 8100 120
+#   pve_isolate_copy <node> 8100 || echo "do not start the copy"
 #
 # The token and pin are read from files on every call, so they never sit in
 # the environment or on a command line. Requires curl and jq.
@@ -71,4 +72,47 @@ pve_vm_ip() {
   done
   echo "no IPv4 from the guest agent after ${timeout}s (is qemu-guest-agent installed and running?)" >&2
   return 2
+}
+
+# pve_isolate_copy NODE VMID
+# Run on a freshly restored, stopped copy, before its first start; never on the
+# original. Sets link_down=1 on every NIC (each keeps the copy's own MAC),
+# clears onboot and protection, then reads the config back.
+# Returns 0 only if that read shows all of it. Changes nothing and returns 1
+# when the VM is not stopped, its config can't be read, or it has host devices,
+# args or a hookscript, which can reach past the network.
+pve_isolate_copy() {
+  local node=$1 vmid=$2 base cfg risky nic
+  local -a set_args=(--data-urlencode onboot=0 --data-urlencode protection=0)
+  base="/nodes/$node/qemu/$vmid"
+  if [[ $(pve_api GET "$base/status/current" | jq -r '.data.status' 2>/dev/null) != stopped ]]; then
+    echo "$vmid is not a readable, stopped VM; nothing changed" >&2
+    return 1
+  fi
+  cfg=$(pve_api GET "$base/config")
+  if [[ -z $cfg ]] || ! jq -e '.data | type == "object"' >/dev/null 2>&1 <<<"$cfg"; then
+    echo "cannot read the config of $vmid; nothing changed" >&2
+    return 1
+  fi
+  risky=$(jq -r '.data | to_entries[]
+    | select((.key | test("^((hostpci|usb|virtiofs|parallel)[0-9]+|args|hookscript)$"))
+        or ((.key | test("^serial[0-9]+$")) and .value != "socket")) | .key' <<<"$cfg")
+  if [[ -n $risky ]]; then
+    echo "$vmid has ${risky//$'\n'/, }; do not start it without the user. Nothing changed" >&2
+    return 1
+  fi
+  while IFS= read -r nic; do
+    [[ -n $nic ]] && set_args+=(--data-urlencode "$nic")
+  done < <(jq -r '.data | to_entries[] | select(.key | test("^net[0-9]+$"))
+    | .key + "=" + (.value | split(",") | map(select(startswith("link_down=") | not))
+        + ["link_down=1"] | join(","))' <<<"$cfg")
+  pve_api PUT "$base/config" "${set_args[@]}" >/dev/null
+  cfg=$(pve_api GET "$base/config")
+  if [[ -z $cfg ]] || ! jq -e '.data | type == "object"
+      and (.onboot // 0 | tostring) == "0" and (.protection // 0 | tostring) == "0"
+      and ([to_entries[] | select(.key | test("^net[0-9]+$"))
+            | .value | split(",") | index("link_down=1") != null] | all)' >/dev/null 2>&1 <<<"$cfg"; then
+    echo "$vmid is not isolated; do not start it" >&2
+    return 1
+  fi
 }

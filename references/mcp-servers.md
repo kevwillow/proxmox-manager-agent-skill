@@ -5,8 +5,10 @@ user asks to set one up. The MCP server makes the API calls; this skill still
 supplies the rules (survey first, own a VMID range, confirm anything
 irreversible) and the pitfalls.
 
-Everything below was measured on PVE 9.2.2 on 2026-10-23 with Proximo 0.46.2
-unless a line says otherwise. Proximo 0.45.0 replaced its per-task tools
+The Proximo behaviour below was measured on PVE 9.2.2 on 2026-11-22 with
+Proximo 0.56.0. The token setup script, client registration and `proximo arm`
+were last run on 2026-10-23 with 0.46.2, and ProxmoxMCP-Plus was last looked at
+in October. Proximo 0.45.0 replaced its per-task tools
 (`pve_clone`, `pve_restore`, ...) with a few tools that take a raw API path;
 notes written for 0.44 do not apply to it.
 
@@ -14,7 +16,7 @@ notes written for 0.44 do not apply to it.
 
 | | Proximo | ProxmoxMCP-Plus |
 |---|---|---|
-| Repo | github.com/john-broadway/proximo (Apache-2.0) | github.com/RekklesNA/ProxmoxMCP-Plus (MIT) |
+| Repo | github.com/john-broadway/proximo (AGPL-3.0-or-later) | github.com/RekklesNA/ProxmoxMCP-Plus (MIT) |
 | Before a change | Every mutation can be planned first; the MCP tool only plans unless `confirm=true` | Optional static approval token |
 | Write access | A read token by default; `proximo arm` swaps in a write token, `proximo disarm` swaps it back | One token |
 | Audit | Keyed, hash-chained ledger; `audit_verify` checks it | Job history in SQLite |
@@ -23,7 +25,7 @@ notes written for 0.44 do not apply to it.
 
 Both were active in October 2026. Proximo was chosen here for its plan-first
 design, its read/write token split and its coverage. It has one maintainer and
-changes fast (0.44.1 to 0.46.2 in under three weeks, with breaking changes): pin a version
+changes fast (0.46.2 to 0.56.0 in a month, with breaking changes): pin a version
 and re-check this file after upgrading. Report defects upstream as issues; its
 CONTRIBUTING asks for an issue before anything non-trivial.
 
@@ -87,8 +89,8 @@ CONTRIBUTING asks for an issue before anything non-trivial.
 
 Optional hardening Proximo leaves off: `PROXIMO_CONSENT_DIR` (single-use
 approval files only the user can write), `PROXIMO_CONTAIN_TRIP_PATH` (kill
-switch) and `PROXIMO_RATE_MAX` (mutations per window). `proximo doctor` names
-each one it finds unset.
+switch) and `PROXIMO_RATE_MAX` (mutations per window). `proximo doctor` flags
+each one it finds unset (CONSENT, CONTAIN).
 
 ## Calling tools
 
@@ -100,8 +102,8 @@ each one it finds unset.
 | `proximo_call` | Any POST/PUT/DELETE. Plans only unless `confirm=true`; then runs armed and waits on the task. `method=undo` restores a captured record |
 | `audit_entries`, `audit_verify` | Read and check the ledger |
 
-API parameters go in `params` on `proximo_read` but in `args` on
-`proximo_plan` and `proximo_call`; a wrong name is refused, not ignored.
+API parameters go in `args` on `proximo_plan`, `proximo_call` and
+`proximo_read` (which also takes `params`).
 Measured over MCP: a `proximo_call` without `confirm` returned
 `"status": "plan"` and created nothing; with `confirm=true` a clone, backup,
 `unique=1` restore, backup delete and two guest deletes each returned
@@ -122,28 +124,31 @@ Common paths (node name is case-sensitive):
 | Delete a guest | `DELETE /nodes/<node>/qemu/<vmid>` (`purge=1`) |
 
 The same engine runs from a shell: `proximo-core pve GET /cluster/resources`.
-**Unlike the MCP tool, `proximo-core` runs a mutation as soon as you call it.**
-Add `--plan` to preview. An agent with a shell should use `--plan` first, every
-time.
+A mutation there runs only with `--confirm`; without it the plan is printed and
+the exit code is 3. Read `--plan` first, then repeat the call with `--confirm`.
+
+For a restore test, follow `runbooks/restore_test.md`. To have Proximo serve it
+as a prompt, point `PROXIMO_RUNBOOKS_DIR` at that folder.
 
 ## Gotchas (measured)
 
 - **Restore copies the original's identity unless you pass `unique=1`.** A
   QEMU restore without it came back with the original's MAC address and SMBIOS
-  UUID; with `unique=1` both were new. The restore plan does not warn. Use it
+  UUID; with `unique=1` both were new. The restore plan has a note about it. Use it
   for any copy that may run beside its original; leave it off only to rebuild a
   lost guest in place, where the old MAC (DHCP reservations, licences) is
   wanted. Even
   with `unique=1` the disk is copied as-is, including `/etc/machine-id`, so a
   copy started next to its original can still get the original's DHCP lease.
-  For a test restore, also set `link_down=1` on the NIC (SKILL.md, *Backups*).
+  For a test restore, also set `link_down=1` on every NIC, from the copy's own
+  values, and clear `onboot` and `protection` (`runbooks/restore_test.md`).
   (Proximo 0.44.2 fixed this in its old `pve_restore` tool; that tool was
   removed in 0.45.0.)
 - **The read token does not see backups.** PVE lists a backup archive only to a
   token holding `Datastore.AllocateSpace` on the storage and `VM.Backup` on
-  its guest (or `Datastore.Allocate` on the storage); `PVEAuditor` gets an empty list (Proximo's SETUP.md, *Seeing
-  backups*). An empty listing while disarmed does not mean there are no
-  backups.
+  its guest (or `Datastore.Allocate` on the storage); `PVEAuditor` gets an empty list from PVE (Proximo's SETUP.md, *Seeing
+  backups*). Proximo refuses that empty list and says why; through the raw API
+  it looks like there are no backups.
 - **`proximo mint pve --write` cannot clone a template kept outside the pool.**
   Its token holds only `PVEVMAdmin` on the pool; a clone of a template outside the pool returned
   `403 Permission check failed (/vms/<template>, VM.Clone)`. Cloning also needs
@@ -171,4 +176,24 @@ time.
   (`shared:backup%2Fvzdump-...`); a literal `/` is refused as an unknown path.
 - **Deleting the token user leaves ACL lines behind.** `pveum user delete`
   with tokens still present left their ACL lines in `/etc/pve/user.cfg` (PVE
-  logs `ignore invalid acl token`). Remove the tokens first, then the user.
+  logs `ignore invalid acl token`), and their secrets stayed in
+  `/etc/pve/priv/token.cfg`. Remove the tokens first, then the user.
+- **`proximo-core` exit 0 does not mean it worked.** A failed task, a wait that
+  ran out and a failed command in a guest all exit 0. Read the JSON: success is
+  `task.succeeded` true for a task, `exec.exited` true with `exitcode` 0 for a
+  VM command, `data.returncode` 0 for a container command.
+- **Long VM command output is lost.** Over the read cap (about 900 bytes of
+  output by default) `agent/exec` returns none of it, and it cannot be read
+  again. Have the user raise `PROXIMO_RAW_MAX_BYTES` before the command runs
+  (measured: 2,292 bytes back at 20000). Without that, redirect the output to
+  a file so it survives: `agent/file-read` has the same cap (checked offline
+  against the 0.56.0 code), so a long file reads back only once the cap is
+  raised, but it can be read again.
+- **A command's arguments are spelled differently by lane.** Over MCP both
+  lanes take a list. From `proximo-core`, container exec needs JSON
+  (`'command=["id","-u"]'`); VM exec takes only a program, so use
+  `command=/usr/bin/bash 'input-data=id -u'`. A repeated `key=value` keeps
+  the last one silently.
+- **A capped config read drops whole keys**, NICs included. List the keys from
+  `GET .../qemu/<vmid>/pending` with `fields=key`, then read the config with
+  `fields` naming the ones you need.

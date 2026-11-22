@@ -1,7 +1,7 @@
 ---
 name: proxmox-manager-agent
 description: "Manage a Proxmox VE homelab (single-node or small cluster) from an AI agent through the PVE API (admin or pool-scoped token) plus root SSH, a scoped SSH user, or alongside a Proxmox MCP server such as Proximo. Covers VM and LXC lifecycle, cloud-init templates and fast clones, ISO and storage management, backup/restore, network bridges with a dead-man revert timer, firewall, cluster operations, and PVE 9.x gotchas. Includes tested API helpers, a least-privilege token recipe, and a sudoers allowlist template. Use when the user says 'manage my Proxmox', 'spin up a VM', 'make a template', 'add an ISO', 'backup the VMs', 'add storage', 'create an LXC', 'snapshot before I upgrade', or any task touching qm, pct, pvesh, pvesm, vzdump, or pve-firewall on a PVE host."
-version: 1.5.2
+version: 1.6.0
 author: kevwillow
 license: MIT
 platforms: [linux]
@@ -54,6 +54,7 @@ original's MAC address and SMBIOS UUID. Leave it off only to rebuild a lost
 guest in place, where the old identity is wanted. With Proximo,
 work disarmed and let the user run `proximo arm` when a change is needed.
 Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
+For a restore test through Proximo, follow `runbooks/restore_test.md`.
 
 ## When to Use
 
@@ -829,18 +830,50 @@ Run `vma verify` on a stream as above. Do not decompress to `/tmp`: on PVE 9
 `/tmp` is a RAM-backed tmpfs, so a large backup fills memory. In a pipeline,
 check every stage (`set -o pipefail`), not just the last.
 
-Restore test without disturbing the original (tested end to end):
+Restore test without disturbing the original (tested end to end on a VM with
+two NICs). Take every value from the copy, never from the original: pasting
+the original's `netN` gives the copy the original's MAC and undoes `unique=1`.
 
 ```bash
-# 1. Restore to a scratch VMID. unique=1 gives the copy a new MAC address.
-pve_api POST /nodes/<node>/qemu --data-urlencode vmid=<scratch> \
-  --data-urlencode archive=<storage>:backup/vzdump-qemu-<vmid>-<ts>.vma.zst \
-  --data-urlencode storage=<vm-storage> --data-urlencode unique=1
-# 2. Unplug its network before first boot, then start it.
-pve_api PUT /nodes/<node>/qemu/<scratch>/config --data-urlencode "net0=<existing net0 value>,link_down=1"
-pve_api POST /nodes/<node>/qemu/<scratch>/status/start
-# 3. Read a file you know the answer to through the guest agent (no network needed).
-pve_api GET "/nodes/<node>/qemu/<scratch>/agent/file-read?file=/etc/hostname" | jq -r .data.content
+source scripts/pve-api.sh   # see its header for PVE_HOST and the two files
+node='<node>' copy='<free scratch VMID>' file='<path with known content>'
+archive='<storage>:backup/vzdump-qemu-<vmid>-<ts>.vma.zst'
+storage='<vm-storage>' pool='<pool>'   # pool='' outside Mode A-narrow
+
+# 1. Restore to a free VMID and wait.  2. Unplug every NIC, clear onboot and
+#    protection, read it back.  3. Only then start, and read the file through
+#    the guest agent (no network needed).
+if upid=$(pve_api POST "/nodes/$node/qemu" \
+      --data-urlencode "vmid=$copy" --data-urlencode "archive=$archive" \
+      --data-urlencode "storage=$storage" --data-urlencode unique=1 \
+      ${pool:+--data-urlencode "pool=$pool"} | jq -r .data) &&
+   pve_wait "$upid" 1800 &&
+   pve_isolate_copy "$node" "$copy" &&
+   upid=$(pve_api POST "/nodes/$node/qemu/$copy/status/start" | jq -r .data) &&
+   pve_wait "$upid" 120
+then
+  got=
+  for _ in {1..60}; do
+    got=$(pve_api GET "/nodes/$node/qemu/$copy/agent/file-read" -G \
+      --data-urlencode "file=$file" | jq -r '.data.content // empty')
+    [[ -n $got ]] && break
+    sleep 5
+  done
+  echo "read from the copy: ${got:-nothing (data not proven)}"
+else
+  echo "restore test stopped: nothing is proven" >&2
+fi
+```
+
+Compare what was read with what you expected. If the restore itself failed,
+`$copy` may be someone else's guest: leave it alone. Otherwise, after the
+user's yes, remove the copy and keep the backup:
+
+```bash
+upid=$(pve_api POST "/nodes/$node/qemu/$copy/status/stop" | jq -r .data) &&
+  pve_wait "$upid" 120 &&
+  upid=$(pve_api DELETE "/nodes/$node/qemu/$copy?purge=1" | jq -r .data) &&
+  pve_wait "$upid"
 ```
 
 **Why unplug it:** a restored copy keeps the original's `/etc/machine-id`.
@@ -1265,14 +1298,17 @@ Stop and tell the user before a write would push the pool past about 80%.
   (Proximo 0.45+), its API paths, and gotchas measured through it.
 - `references/proxmox-api-token.md` — creating, scoping and revoking API
   tokens with `pveum`, including the pool-scoped least-privilege setup.
+- `runbooks/restore_test.md` — prove a VM backup through Proximo: restore a
+  copy, unplug every NIC, read known data, remove the copy.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 
 ## Scripts
 
 - `scripts/pve-api.sh` — source it for `pve_api` (pinned TLS, token read from
-  a file per call), `pve_wait` (task exit status, log on failure, timeout) and
-  `pve_vm_ip` (guest-agent IP polling). Tested by `tests/pve-api.test.sh`.
+  a file per call), `pve_wait` (task exit status, log on failure, timeout),
+  `pve_vm_ip` (guest-agent IP polling) and `pve_isolate_copy` (a restored
+  copy's NICs down before its first start). Tested by `tests/pve-api.test.sh`.
 - `scripts/vm-from-iso.sh` — wrapper around `qm create`: checks the ISO
   exists, uses the next free VMID unless `--vmid` is given, boots disk then
   ISO. Works as root without sudo. Tested on PVE 9.2.2.

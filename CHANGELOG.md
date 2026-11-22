@@ -1,5 +1,27 @@
 # Changelog
 
+## 1.6.0 (2026-11-22)
+
+Measured on PVE 9.2.2 with Proximo 0.56.0.
+
+- **Safety: the restore test could boot a copy on the network.** Run as
+  written on a VM with two NICs it left `net1` up, kept `onboot=1` and
+  `protection=1`, failed silently when the restore was still running, and
+  gave the copy the original's MAC when `net0` was taken from the original.
+  It now waits, calls the new `pve_isolate_copy` (every NIC down with the
+  copy's own MAC, both flags cleared, read back) and starts only if that
+  passes. Run as written: both links down, no address, the known file read,
+  the original unchanged.
+- `runbooks/restore_test.md`: the same test as a Proximo operator runbook,
+  installed by `install.sh`.
+- Corrected for 0.56.0: `proximo-core` needs `--confirm` to change anything;
+  the restore plan notes `unique=1`; `proximo_read` takes `args`; an empty
+  backup list while disarmed is refused with a reason; the license is
+  AGPL-3.0-or-later.
+- New gotchas: exit 0 on failure, lost guest-exec output, how each lane spells
+  a command's arguments, capped config reads, token secrets left by deleting
+  the user first.
+
 ## 1.5.2 (2026-10-24)
 
 Re-checked every Proximo note against the Proximo 0.46.2 source (still the

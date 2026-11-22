@@ -37,7 +37,17 @@ server makes the API calls, the skill supplies the rules and the pitfalls.
 Proximo with a read-only token and a pool-scoped write token
 (`templates/proximo-token-setup.sh`), and lists what was measured through it.
 
-## What's new in 1.5.0
+## What's new in 1.6.0
+
+- **Safety fix: the restore test could put a copy on the network.** It
+  unplugged only `net0`, did not wait for the restore, and could be read as
+  "reuse the original's `net0`", MAC included. It now unplugs every NIC from
+  the copy's own values, clears `onboot` and `protection`, and starts nothing
+  until that reads back (`pve_isolate_copy` in `scripts/pve-api.sh`).
+- The same procedure as a Proximo runbook: `runbooks/restore_test.md`.
+- Proximo notes re-measured on 0.56.0.
+
+## What was new in 1.5.0
 
 - Updated for Proximo 0.45+, which replaced its per-task tools with a few
   tools that take a raw API path: new setup, the API paths for common work,
@@ -115,7 +125,7 @@ and say "install this skill." The agent can clone the repo and run
 
 ### Manual install
 
-Copy `SKILL.md` and the `references/`, `scripts/`, `templates/`
+Copy `SKILL.md` and the `references/`, `scripts/`, `templates/`, `runbooks/`
 directories into the right place for your agent:
 
 | Agent | Path |
@@ -131,19 +141,19 @@ directories into the right place for your agent:
 # Example for Hermes
 mkdir -p ~/.hermes/skills/proxmox-manager-agent
 cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.hermes/skills/proxmox-manager-agent/
+cp -r references scripts templates runbooks ~/.hermes/skills/proxmox-manager-agent/
 chmod +x ~/.hermes/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for OpenClaw (note the workspace, not ~/.openclaw/skills/)
 mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent
 cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.openclaw/workspace/skills/proxmox-manager-agent/
+cp -r references scripts templates runbooks ~/.openclaw/workspace/skills/proxmox-manager-agent/
 chmod +x ~/.openclaw/workspace/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for Cursor
 mkdir -p ~/.cursor/skills/proxmox-manager-agent
 cp SKILL.md ~/.cursor/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.cursor/skills/proxmox-manager-agent/
+cp -r references scripts templates runbooks ~/.cursor/skills/proxmox-manager-agent/
 chmod +x ~/.cursor/skills/proxmox-manager-agent/scripts/*.sh
 ```
 
@@ -248,7 +258,7 @@ proxmox-manager-agent-skill/
 │   ├── mcp-servers.md          Proximo MCP: setup, tool map, measured gotchas
 │   └── cluster.md              multi-node, HA rules, live migration
 ├── scripts/
-│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip
+│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip, pve_isolate_copy
 │   ├── vm-from-iso.sh          Wrapper around qm create
 │   ├── lxc-from-template.sh    Wrapper around pct create
 │   ├── iso-import.sh           Ventoy USB → Proxmox ISO with size guard
@@ -260,6 +270,8 @@ proxmox-manager-agent-skill/
 │   ├── 99-zen-agent-sshd.conf  Drop-in sshd Match block
 │   ├── install-sudoers.sh      Install + validate the sudoers file
 │   └── proximo-token-setup.sh  Read + pool-scoped write tokens for an MCP server
+├── runbooks/
+│   └── restore_test.md         Prove a VM backup, as a Proximo operator runbook
 └── tests/
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```
