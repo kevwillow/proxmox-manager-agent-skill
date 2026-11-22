@@ -107,10 +107,12 @@ a full session interruption while the user runs diagnostics manually.
 # Should list every ISO you just copied, with sizes
 sudo -n pvesh get /nodes/localhost/storage/local/content --content iso
 
-# Should match what's mounted at /mnt/ventoy
-sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso" -printf "%f\n" | sort > /tmp/source.txt
-sudo -n ls /var/lib/vz/template/iso/ | sort > /tmp/dest.txt
-diff /tmp/source.txt /tmp/dest.txt
+# Every source name must be in the destination. An empty listing is a failed
+# check, not a match. (Names only: iso-import.sh compares the bytes.)
+src=$(sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso" -printf "%f\n") && [ -n "$src" ] &&
+  dst=$(sudo -n ls /var/lib/vz/template/iso/) &&
+  diff <(sort <<<"$src") <(grep -xF -- "$src" <<<"$dst" | sort) &&
+  echo "every ISO name is there"
 ```
 
 If `diff` shows any differences, the copy didn't get everything —

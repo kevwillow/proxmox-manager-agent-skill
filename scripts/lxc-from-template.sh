@@ -125,6 +125,11 @@ $SUDO pct create "$CTID" "${TPL_STORAGE}:vztmpl/${TEMPLATE}" \
     "${PASS_ARGS[@]}"
 
 echo
+# pct create exits 0 even when --start fails, so look.
+if [[ "$($SUDO pct status "$CTID")" != "status: running" ]]; then
+    echo "ERROR: CT ${CTID} was created but is NOT running. Read the warnings above, then try: pct start ${CTID}" >&2
+    exit 1
+fi
 echo "CT ${CTID} created and started."
 echo "Console:"
 echo "  pct enter ${CTID}    # attach to console"

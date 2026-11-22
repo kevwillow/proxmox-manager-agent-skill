@@ -11,6 +11,15 @@
 
 set -uo pipefail
 
+failed=0
+# A read that fails is unknown, which is not the same as empty.
+show() {
+    if ! "$@" 2>&1; then
+        echo "!! FAILED: $* (this section is unknown, not empty)"
+        failed=1
+    fi
+}
+
 echo "========================================"
 echo " Proxmox cluster: $(hostname)"
 echo " $(date)"
@@ -18,31 +27,40 @@ echo "========================================"
 
 echo
 echo "=== Cluster status (pvecm) ==="
-pvecm status 2>/dev/null || echo "(not in a cluster)"
+if out=$(pvecm status 2>&1); then
+    echo "$out"
+elif grep -q 'corosync.conf.* does not exist' <<<"$out"; then
+    echo "(not in a cluster)"
+else
+    echo "$out"
+    echo "!! FAILED: pvecm status (cluster state is unknown)"
+    failed=1
+fi
 
 echo
 echo "=== Nodes ==="
-pvesh get /nodes 2>/dev/null
+show pvesh get /nodes
 
 echo
 echo "=== Cluster resources (all VMs and CTs across nodes) ==="
-pvesh get /cluster/resources --type vm 2>/dev/null
+show pvesh get /cluster/resources --type vm
 
 echo
 echo "=== Storage pools ==="
-pvesm status 2>/dev/null
+show pvesm status
 
 echo
 echo "=== HA services and rules ==="
-ha-manager status 2>/dev/null || echo "(HA not configured)"
+show ha-manager status
 # PVE 9 replaced HA groups with rules; this fails harmlessly on PVE 8.
-ha-manager rules list 2>/dev/null || true
+ha-manager rules list 2>&1 || echo "(HA rules not read: PVE 9+ only, or the read failed)"
 
 echo
 echo "=== Recent pve-cluster log errors ==="
-journalctl -u pve-cluster --no-pager -n 10 -p err 2>/dev/null | tail -10
+show journalctl -u pve-cluster --no-pager -n 10 -p err
 
 echo
 echo "========================================"
-echo " Done."
+if (( failed )); then echo " Done, with FAILED reads above."; else echo " Done."; fi
 echo "========================================"
+exit "$failed"

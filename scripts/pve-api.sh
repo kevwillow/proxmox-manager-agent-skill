@@ -9,17 +9,18 @@
 #   pve_api GET /nodes
 #   upid=$(pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=8100 | jq -r .data)
 #   pve_wait "$upid" 300 || echo "clone failed"
-#   pve_vm_ip <node> 8100 120
+#   pve_task POST /nodes/<node>/qemu/8100/status/start && pve_vm_ip <node> 8100 120
 #   pve_isolate_copy <node> 8100 || echo "do not start the copy"
 #
 # The token and pin are read from files on every call, so they never sit in
-# the environment or on a command line. Requires curl and jq.
+# the environment or on a command line. Requires curl 7.76+ and jq.
 
-# pve_api METHOD PATH [curl args...]: prints the JSON response.
+# pve_api METHOD PATH [curl args...]: prints the JSON response, and returns
+# non-zero when the request fails or Proxmox refuses it.
 pve_api() {
   local method=$1 path=$2
   shift 2
-  curl -sS -k --pinnedpubkey "$(cat "$PVE_PIN_FILE")" \
+  curl -sS --fail-with-body -k --pinnedpubkey "$(cat "$PVE_PIN_FILE")" \
     -H "Authorization: $(cat "$PVE_TOKEN_FILE")" \
     -X "$method" "https://$PVE_HOST:8006/api2/json$path" "$@"
 }
@@ -39,12 +40,13 @@ pve_wait() {
   node=$(cut -d: -f2 <<<"$upid")
   enc=$(jq -rn --arg u "$upid" '$u|@uri')
   while (( waited < timeout )); do
-    status=$(pve_api GET "/nodes/$node/tasks/$enc/status")
-    if jq -e '.data.status == "stopped"' >/dev/null 2>&1 <<<"$status"; then
+    status=$(pve_api GET "/nodes/$node/tasks/$enc/status") || status=
+    # -s, because jq 1.6 exits 0 for -e on empty input.
+    if jq -es 'length == 1 and .[0].data.status == "stopped"' >/dev/null 2>&1 <<<"$status"; then
       exitstatus=$(jq -r '.data.exitstatus' <<<"$status")
       echo "$exitstatus"
       [[ $exitstatus == OK ]] && return 0
-      pve_api GET "/nodes/$node/tasks/$enc/log?limit=500" | jq -r '.data[].t' | tail -20 >&2
+      pve_api GET "/nodes/$node/tasks/$enc/log?limit=500" | jq -r '.data[].t' | tail -20 >&2 || true
       return 1
     fi
     sleep 3
@@ -52,6 +54,18 @@ pve_wait() {
   done
   echo "TIMEOUT after ${timeout}s: $upid" >&2
   return 2
+}
+
+# pve_task METHOD PATH [curl args...]
+# Sends a write that starts a task and waits up to 30 minutes for it.
+# Returns 0 only if the write was accepted and the task ended OK.
+pve_task() {
+  local reply
+  if ! reply=$(pve_api "$@"); then
+    echo "refused: $1 $2 $reply" >&2
+    return 1
+  fi
+  pve_wait "$(jq -r .data <<<"$reply")" 1800
 }
 
 # pve_vm_ip NODE VMID [timeout-seconds, default 180]
@@ -62,7 +76,7 @@ pve_vm_ip() {
   while (( waited < timeout )); do
     ip=$(pve_api GET "/nodes/$node/qemu/$vmid/agent/network-get-interfaces" 2>/dev/null |
       jq -r '[.data.result[]? | select(.name != "lo") | .["ip-addresses"][]?
-              | select(.["ip-address-type"] == "ipv4") | .["ip-address"]][0] // empty' 2>/dev/null)
+              | select(.["ip-address-type"] == "ipv4") | .["ip-address"]][0] // empty' 2>/dev/null) || ip=
     if [[ -n $ip ]]; then
       echo "$ip"
       return 0
@@ -89,8 +103,8 @@ pve_isolate_copy() {
     echo "$vmid is not a readable, stopped VM; nothing changed" >&2
     return 1
   fi
-  cfg=$(pve_api GET "$base/config")
-  if [[ -z $cfg ]] || ! jq -e '.data | type == "object"' >/dev/null 2>&1 <<<"$cfg"; then
+  cfg=$(pve_api GET "$base/config") || cfg=
+  if ! jq -es 'length == 1 and (.[0].data | type == "object")' >/dev/null 2>&1 <<<"$cfg"; then
     echo "cannot read the config of $vmid; nothing changed" >&2
     return 1
   fi
@@ -106,12 +120,12 @@ pve_isolate_copy() {
   done < <(jq -r '.data | to_entries[] | select(.key | test("^net[0-9]+$"))
     | .key + "=" + (.value | split(",") | map(select(startswith("link_down=") | not))
         + ["link_down=1"] | join(","))' <<<"$cfg")
-  pve_api PUT "$base/config" "${set_args[@]}" >/dev/null
-  cfg=$(pve_api GET "$base/config")
-  if [[ -z $cfg ]] || ! jq -e '.data | type == "object"
+  pve_api PUT "$base/config" "${set_args[@]}" >/dev/null || true   # the read-back decides
+  cfg=$(pve_api GET "$base/config") || cfg=
+  if ! jq -es 'length == 1 and (.[0].data | type == "object"
       and (.onboot // 0 | tostring) == "0" and (.protection // 0 | tostring) == "0"
       and ([to_entries[] | select(.key | test("^net[0-9]+$"))
-            | .value | split(",") | index("link_down=1") != null] | all)' >/dev/null 2>&1 <<<"$cfg"; then
+            | .value | split(",") | index("link_down=1") != null] | all))' >/dev/null 2>&1 <<<"$cfg"; then
     echo "$vmid is not isolated; do not start it" >&2
     return 1
   fi

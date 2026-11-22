@@ -72,11 +72,11 @@ H=https://pve.example.com:8006
 AUTH="Authorization: $(cat ~/.config/pve/pve.token)"
 
 # List VMs
-curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" \
     "$H/api2/json/cluster/resources?type=vm"
 
 # Create a VM (form-encoded, as the web UI does)
-curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" -X POST \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" -X POST \
     "$H/api2/json/nodes/<node>/qemu" \
     --data-urlencode vmid=8100 --data-urlencode name=test \
     --data-urlencode memory=2048 --data-urlencode cores=2

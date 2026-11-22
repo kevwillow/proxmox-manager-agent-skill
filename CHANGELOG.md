@@ -12,6 +12,23 @@ Measured on PVE 9.2.2 with Proximo 0.56.0.
   copy's own MAC, both flags cleared, read back) and starts only if that
   passes. Run as written: both links down, no address, the known file read,
   the original unchanged.
+- **Safety: `add-nvme-storage.sh` could offer to wipe the boot drive.** It
+  compared the typed serial with sysfs, which pads NVMe serials and has none
+  for SATA. It also accepted a typo, an empty answer or a partition. All are
+  refused now, as is any disk that is mounted, swap, LVM, ZFS, RAID or LUKS.
+- **A failed, empty or cut check no longer reads as success:**
+  - `pve_api` returns non-zero on a refused request (curl 7.76+); new
+    `pve_task` sends and waits. Checks hold on jq 1.6, where `-e` passes on
+    empty input.
+  - The template, clone, create, fstab, removal, provenance, token and
+    network-revert recipes stop at the first failed step.
+  - The restore test exits 0 only when the data matched.
+  - The status scripts show failed reads and exit non-zero; `lxc-from-template`
+    checks the container is running; `iso-import` compares bytes; the sudoers
+    smoke test runs a real command.
+  - An empty guest list is no longer called proof of no guests.
+  - The cluster "tag all" loop is gone: it never worked, and fixed it would
+    have overwritten every guest's tags.
 - `runbooks/restore_test.md`: the same test as a Proximo operator runbook,
   installed by `install.sh`.
 - Corrected for 0.56.0: `proximo-core` needs `--confirm` to change anything;

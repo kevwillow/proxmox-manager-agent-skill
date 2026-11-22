@@ -38,8 +38,8 @@ CONTRIBUTING asks for an issue before anything non-trivial.
    ```bash
    curl -sS -H 'Accept: application/vnd.pypi.integrity.v1+json' \
      https://pypi.org/integrity/proximo-proxmox/<version>/proximo_proxmox-<version>-py3-none-any.whl/provenance |
-     jq -r '.attestation_bundles[0].publisher | "\(.repository) \(.workflow)"'
-   uv tool install 'proximo-proxmox==<version>'
+     jq -es 'length == 1 and ([.[0].attestation_bundles[].publisher.repository] | unique) == ["john-broadway/proximo"]' &&
+     uv tool install 'proximo-proxmox==<version>'
    ```
 
    Expect `john-broadway/proximo release-pypi.yml`.
@@ -90,7 +90,7 @@ CONTRIBUTING asks for an issue before anything non-trivial.
 Optional hardening Proximo leaves off: `PROXIMO_CONSENT_DIR` (single-use
 approval files only the user can write), `PROXIMO_CONTAIN_TRIP_PATH` (kill
 switch) and `PROXIMO_RATE_MAX` (mutations per window). `proximo doctor` flags
-each one it finds unset (CONSENT, CONTAIN).
+only the first two when unset (CONSENT, CONTAIN).
 
 ## Calling tools
 

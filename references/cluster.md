@@ -138,10 +138,8 @@ pvesh get /nodes
 # Cluster log
 journalctl -u pve-cluster --no-pager -n 50
 
-# Apply a tag to all VMs matching a pattern
-for vmid in $(pvesh get /cluster/resources --type vm | jq -r '.data[].vmid'); do
-    pvesh set /nodes/<node>/qemu/$vmid/config --tags "homelab,automated"
-done
+# Tag a guest: this replaces its existing tags, so one at a time, on its own node
+pvesh set /nodes/<node>/qemu/<vmid>/config --tags "homelab,automated"
 ```
 
 ## Pitfalls

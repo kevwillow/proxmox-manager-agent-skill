@@ -75,9 +75,11 @@ check "isolate: unreadable config not written" "$(wc -c <"$PUTS")" 0
 
 copy 'not json'
 check "isolate: non-JSON config refused" "$(isolate)" 1
+check "isolate: non-JSON config not written" "$(wc -c <"$PUTS")" 0
 
 copy ''
 check "isolate: empty response refused" "$(isolate)" 1
+check "isolate: empty response not written" "$(wc -c <"$PUTS")" 0
 
 for dev in '"hostpci0":"0000:01:00.0"' '"usb1":"host=1-2"' '"virtiofs0":"share"' '"args":"-S"' '"hookscript":"local:snippets/h.sh"' '"parallel0":"/dev/parport0"' '"serial1":"/dev/ttyS0"'; do
   copy "{\"data\":{$dev}}"

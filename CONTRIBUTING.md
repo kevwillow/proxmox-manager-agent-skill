@@ -37,7 +37,7 @@ change so we can agree on direction.
 Before submitting a PR:
 
 1. Run `./install.sh --agent hermes` and verify the skill loads.
-2. Run `bash tests/pve-api.test.sh` and `shellcheck -x -S warning scripts/*.sh templates/*.sh install.sh`.
+2. Run `bash tests/pve-api.test.sh`, `bash tests/checks.test.sh` and `shellcheck -x -S warning scripts/*.sh templates/*.sh install.sh`.
 3. Run any new script on a real PVE host (PVE 9.x if possible).
 4. Update CHANGELOG.md with the entry under "Unreleased."
 5. Update SKILL.md's reference/script sections to mention the new files.

@@ -44,6 +44,12 @@ Proximo with a read-only token and a pool-scoped write token
   "reuse the original's `net0`", MAC included. It now unplugs every NIC from
   the copy's own values, clears `onboot` and `protection`, and starts nothing
   until that reads back (`pve_isolate_copy` in `scripts/pve-api.sh`).
+- **Safety fix: `add-nvme-storage.sh` could offer to wipe the boot drive.**
+  Its serial check failed on padded NVMe serials and on every SATA disk. It
+  now compares what `lsblk` reports and refuses any disk in use.
+- Failed, empty or cut checks no longer read as success, in the helpers,
+  scripts and recipes. `pve_api` now returns non-zero when Proxmox refuses
+  (needs curl 7.76+).
 - The same procedure as a Proximo runbook: `runbooks/restore_test.md`.
 - Proximo notes re-measured on 0.56.0.
 
@@ -258,7 +264,7 @@ proxmox-manager-agent-skill/
 │   ├── mcp-servers.md          Proximo MCP: setup, tool map, measured gotchas
 │   └── cluster.md              multi-node, HA rules, live migration
 ├── scripts/
-│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip, pve_isolate_copy
+│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_task, pve_vm_ip, pve_isolate_copy
 │   ├── vm-from-iso.sh          Wrapper around qm create
 │   ├── lxc-from-template.sh    Wrapper around pct create
 │   ├── iso-import.sh           Ventoy USB → Proxmox ISO with size guard
@@ -273,6 +279,7 @@ proxmox-manager-agent-skill/
 ├── runbooks/
 │   └── restore_test.md         Prove a VM backup, as a Proximo operator runbook
 └── tests/
+    ├── checks.test.sh          Offline test: a failed check never reads as success
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```
 

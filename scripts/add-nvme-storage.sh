@@ -39,6 +39,14 @@ echo "It will have /boot/efi and LVM volumes (pve-root, pve-swap, pve-data)."
 echo "Mark that serial as OFF-LIMITS — this script must NEVER touch it."
 echo
 read -p "Enter the BOOT DRIVE SERIAL to exclude: " BOOT_SERIAL
+# sysfs pads NVMe serials and has none for SATA, so ask lsblk and ignore spaces.
+squash() { tr -d '[:blank:]' <<<"$1"; }
+BOOT_KEY=$(squash "$BOOT_SERIAL")
+ALL_SERIALS=$(lsblk -dn -o SERIAL | tr -d '[:blank:]')
+if [[ -z "$BOOT_KEY" ]] || ! grep -qxF -- "$BOOT_KEY" <<<"$ALL_SERIALS"; then
+    echo "ERROR: no disk here has the serial '$BOOT_SERIAL'. Aborting."
+    exit 1
+fi
 echo "Excluding boot drive: $BOOT_SERIAL"
 echo
 
@@ -59,12 +67,28 @@ if [[ ! -b "$TARGET_DRIVE" ]]; then
 fi
 
 # Confirm identity
-TARGET_SERIAL=$(cat "/sys/block/$(basename "$TARGET_DRIVE")/device/serial" 2>/dev/null || echo "unknown")
+if [[ "$(lsblk -dn -o TYPE "$TARGET_DRIVE")" != "disk" ]]; then
+    echo "ERROR: $TARGET_DRIVE is not a whole disk. Aborting."
+    exit 1
+fi
+TARGET_SERIAL=$(lsblk -dn -o SERIAL "$TARGET_DRIVE")
+TARGET_KEY=$(squash "$TARGET_SERIAL")
+if [[ -z "$TARGET_KEY" ]]; then
+    echo "ERROR: cannot read the serial of $TARGET_DRIVE, so cannot rule out the boot drive. Aborting."
+    exit 1
+fi
 TARGET_MODEL=$(cat "/sys/block/$(basename "$TARGET_DRIVE")/device/model" 2>/dev/null || echo "unknown")
 echo
 echo "Target: $TARGET_DRIVE ($TARGET_MODEL, S/N $TARGET_SERIAL)"
-if [[ "$TARGET_SERIAL" == "$BOOT_SERIAL" ]]; then
+if [[ "$TARGET_KEY" == "$BOOT_KEY" ]]; then
     echo "ERROR: That is the BOOT DRIVE. Aborting."
+    exit 1
+fi
+# The typed serial can name the wrong disk, so also refuse any disk in use.
+TARGET_USE=$(lsblk -nr -o MOUNTPOINT,FSTYPE "$TARGET_DRIVE")
+if grep -qE '^/|\[SWAP\]|LVM2_member|zfs_member|linux_raid_member|crypto_LUKS' <<<"$TARGET_USE"; then
+    echo "ERROR: $TARGET_DRIVE is mounted, swap, or part of LVM, ZFS, RAID or LUKS. Aborting."
+    echo "If it really is disposable, the user must release it by hand first."
     exit 1
 fi
 read -p "Confirm wipe of $TARGET_DRIVE? [yes/NO] " CONFIRM
@@ -170,10 +194,18 @@ done
 
 echo
 echo "Validating with mount -a..."
-if mount -a; then
+# mount -a exits 0 when a nofail device is missing, so check each mount itself.
+mounted() {
+    local i uuid
+    for i in $(seq 1 "$PARTITION_COUNT"); do
+        uuid=$(blkid -s UUID -o value "${TARGET_DRIVE}p${i}") || return 1
+        [[ -n "$uuid" && "$(findmnt -n -o UUID --mountpoint "${MOUNT_PREFIX}${i}")" == "$uuid" ]] || return 1
+    done
+}
+if mount -a && mounted; then
     echo "OK — all mounts verified."
 else
-    echo "ERROR: mount -a failed. Restoring backup..."
+    echo "ERROR: a partition is not mounted where expected. Restoring backup..."
     cp "$FSTAB_BAK" /etc/fstab
     exit 1
 fi

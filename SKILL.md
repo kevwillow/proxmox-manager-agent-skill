@@ -104,9 +104,11 @@ Bootstrap this mode as follows:
    printing it, and save the pin (with its `sha256//` prefix) the same way:
 
    ```bash
-   install -m 600 /dev/null ~/.config/pve/<host>.token
-   jq -j '"PVEAPIToken=\(.data["full-tokenid"])=\(.data.value)"' token-response.json > ~/.config/pve/<host>.token
-   rm token-response.json
+   # The secret is shown once: delete the response only after it is saved.
+   T=~/.config/pve/<host>.token
+   install -m 600 /dev/null "$T" &&
+     jq -ej '.data | select(.value) | "PVEAPIToken=\(.["full-tokenid"])=\(.value)"' token-response.json > "$T" &&
+     [ -s "$T" ] && rm token-response.json
    install -m 600 /dev/null ~/.config/pve/<host>.pin
    printf 'sha256//%s' "$PIN" > ~/.config/pve/<host>.pin
    ```
@@ -134,6 +136,7 @@ pve_api GET '/cluster/resources?type=vm'
 pve_api GET '/nodes/<node>/status'
 upid=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>' | jq -r .data)
 pve_wait "$upid" 300      # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
+pve_task POST '/nodes/<node>/qemu/<new-vmid>/status/start'   # both in one: send, then wait
 pve_vm_ip <node> <new-vmid> 180   # first IPv4 from the guest agent, polling until it answers
 ```
 
@@ -280,9 +283,10 @@ sudo -n pvesh get /nodes
 # └────────┴────────┴───────┴─...
 ```
 
-`qm list` and `pct list` return empty when there are no VMs/containers.
-Empty output is not an error — verify with `sudo -n -l` to distinguish
-"command worked, no VMs yet" from "command was denied."
+An empty listing is not proof of no guests. The API answers 200 with an empty
+list when the token may not see them (measured), so check the token's rights
+(`GET /access/permissions`) first. Over SSH, trust an empty `qm list` or
+`pct list` only if the command exited 0 as root.
 
 ## Whitelist & Blacklist Commands
 
@@ -569,10 +573,12 @@ df -h /mnt/<label>     # verify the FULL partition size, NOT 458MB
 (user in Mode B, root SSH in Mode A).**
 
 ```bash
-UUID=$(blkid -s UUID -o value /dev/nvmeXnYp1)
-echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
-mount -a
-df -h | grep <label>
+# mount -a exits 0 when a nofail device is missing, so check the mount itself.
+UUID=$(sudo blkid -s UUID -o value /dev/nvmeXnYp1) && [ -n "$UUID" ] &&
+  echo "UUID=$UUID /mnt/<label> ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab &&
+  sudo mount -a &&
+  [ "$(findmnt -n -o UUID --mountpoint /mnt/<label>)" = "$UUID" ] &&
+  df -h /mnt/<label>
 ```
 
 The shell redirects `>>` before sudo runs, so `tee` needs root to append to
@@ -618,26 +624,27 @@ Verified end to end on PVE 9.2.2 on 2026-10-03 with 16 cloud images: Ubuntu
 22.04/24.04/26.04, Debian 11/12/13, Rocky and Alma 8/9/10, Fedora 44,
 openSUSE Leap 15.6 and Tumbleweed, Amazon Linux 2023. Every one went from
 clone to an IP from the guest agent in 21-43 seconds, with SSH and sudo
-working. The recipe below, exactly as written, was re-run for Ubuntu 24.04
-on 2026-10-07: template built, linked clone, IP and SSH in 46 seconds. Each
-write returns a UPID; `pve_wait` it.
+working. The recipe's steps were re-run for Ubuntu 24.04 on 2026-10-07:
+template built, linked clone, IP and SSH in 46 seconds. They have since been
+chained through `pve_task`; the whole chain was tested with stand-ins only.
 
 ```bash
+# Every step is chained: if one is refused (say the id is already someone
+# else's guest), nothing after it runs on that id.
 # 1. Fetch the image onto the host, checksum-verified. Saved with a .qcow2 name.
-pve_api POST /nodes/<node>/storage/local/download-url \
-  --data-urlencode content=import --data-urlencode filename=ubuntu-26.04-server-cloudimg-amd64.qcow2 \
-  --data-urlencode url=https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img \
-  --data-urlencode checksum=<sha256 from SHA256SUMS> --data-urlencode checksum-algorithm=sha256
-
 # 2. A vendor snippet that makes sure qemu-guest-agent is installed and running.
 #    The agent is what reports the VM's IP to /agent/network-get-interfaces.
-pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets
-ssh root@<host> 'mkdir -p /var/lib/vz/snippets; printf "#cloud-config\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n" > /var/lib/vz/snippets/vendor-guest-agent.yaml'
-
 # 3. Template VM. sshkeys must be URL-encoded BEFORE --data-urlencode encodes it again.
-#    ciupgrade=0: see the note below.
-KEYS=$(cat ~/.ssh/id_ed25519.pub | jq -sRr @uri)
-pve_api POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name=ubuntu-2604-tmpl \
+#    ciupgrade=0: see the note below. The imported disk is only as big as the
+#    image (about 3.5 GB): grow it before converting, or every clone starts nearly full.
+KEYS=$(cat ~/.ssh/id_ed25519.pub | jq -sRr @uri) && [ -n "$KEYS" ] &&
+pve_task POST /nodes/<node>/storage/local/download-url \
+  --data-urlencode content=import --data-urlencode filename=ubuntu-26.04-server-cloudimg-amd64.qcow2 \
+  --data-urlencode url=https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img \
+  --data-urlencode checksum=<sha256 from SHA256SUMS> --data-urlencode checksum-algorithm=sha256 &&
+pve_api PUT /storage/local --data-urlencode content=vztmpl,iso,import,backup,snippets &&
+ssh root@<host> 'mkdir -p /var/lib/vz/snippets; printf "#cloud-config\npackage_update: true\npackages: [qemu-guest-agent]\nruncmd:\n  - [systemctl, enable, --now, qemu-guest-agent]\n" > /var/lib/vz/snippets/vendor-guest-agent.yaml' &&
+pve_task POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name=ubuntu-2604-tmpl \
   --data-urlencode memory=2048 --data-urlencode cores=2 --data-urlencode cpu=host --data-urlencode ostype=l26 \
   --data-urlencode scsihw=virtio-scsi-single \
   --data-urlencode 'scsi0=local-lvm:0,import-from=local:import/ubuntu-26.04-server-cloudimg-amd64.qcow2,discard=on,ssd=1,iothread=1' \
@@ -645,24 +652,28 @@ pve_api POST /nodes/<node>/qemu --data-urlencode vmid=9000 --data-urlencode name
   --data-urlencode serial0=socket --data-urlencode vga=serial0 --data-urlencode agent=enabled=1 \
   --data-urlencode net0=virtio,bridge=vmbr0 --data-urlencode ciuser=<user> --data-urlencode "sshkeys=$KEYS" \
   --data-urlencode ipconfig0=ip=dhcp --data-urlencode ciupgrade=0 \
-  --data-urlencode cicustom=vendor=local:snippets/vendor-guest-agent.yaml
-# The imported disk is only as big as the image (about 3.5 GB). Grow it before
-# converting, or every clone starts nearly full.
-pve_api PUT  /nodes/<node>/qemu/9000/resize --data-urlencode disk=scsi0 --data-urlencode size=20G
-pve_api POST /nodes/<node>/qemu/9000/template
+  --data-urlencode cicustom=vendor=local:snippets/vendor-guest-agent.yaml &&
+pve_task PUT  /nodes/<node>/qemu/9000/resize --data-urlencode disk=scsi0 --data-urlencode size=20G &&
+pve_task POST /nodes/<node>/qemu/9000/template
+```
 
+```bash
 # 4a. Throwaway test VM: linked clone (full=0). Near-instant on LVM-thin, ZFS or
 #     Ceph, and it uses almost no space. Must live on the template's storage.
-pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
-  --data-urlencode full=0
-# 4b. Long-lived VM: full clone, independent of the template, then size it.
-pve_api POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
-  --data-urlencode full=1 --data-urlencode storage=<vm-storage>
-pve_api PUT  /nodes/<node>/qemu/<vmid>/config --data-urlencode cores=4 --data-urlencode memory=8192 --data-urlencode onboot=1
-pve_api PUT  /nodes/<node>/qemu/<vmid>/resize --data-urlencode disk=scsi0 --data-urlencode size=64G
+# 5.  Start, then poll the guest agent for the IP.
+pve_task POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
+  --data-urlencode full=0 &&
+pve_task POST /nodes/<node>/qemu/<vmid>/status/start &&
+pve_vm_ip <node> <vmid> 180
+```
 
-# 5. Start, then poll the guest agent for the IP.
-pve_api POST /nodes/<node>/qemu/<vmid>/status/start
+```bash
+# 4b. Long-lived VM: full clone, independent of the template, then size it.
+pve_task POST /nodes/<node>/qemu/9000/clone --data-urlencode newid=<vmid> --data-urlencode name=<name> \
+  --data-urlencode full=1 --data-urlencode storage=<vm-storage> &&
+pve_api  PUT  /nodes/<node>/qemu/<vmid>/config --data-urlencode cores=4 --data-urlencode memory=8192 --data-urlencode onboot=1 &&
+pve_task PUT  /nodes/<node>/qemu/<vmid>/resize --data-urlencode disk=scsi0 --data-urlencode size=64G &&
+pve_task POST /nodes/<node>/qemu/<vmid>/status/start &&
 pve_vm_ip <node> <vmid> 180
 ```
 
@@ -709,7 +720,8 @@ cloud-init grows the root filesystem to the resized disk on first boot. The
 # 1. Pick a free VMID in your range (or ask Proxmox: pvesh get /cluster/nextid)
 VMID=<vmid>
 
-# 2. Create with sensible defaults
+# 2. Create with sensible defaults. Chained: a refused create means $VMID may
+#    be someone else's guest, so do nothing more to it.
 sudo -n qm create $VMID \
     --name "ubuntu-test" \
     --memory 2048 \
@@ -719,13 +731,9 @@ sudo -n qm create $VMID \
     --scsi0 local-lvm:32 \
     --ide2 local:iso/ubuntu-24.04-live-server-amd64.iso,media=cdrom \
     --boot "order=scsi0;ide2" \
-    --ostype l26
-
-# 3. Start it
-sudo -n qm start $VMID
-
-# 4. See the screen without a browser (root): save a screenshot, then view it
-echo "screendump /tmp/vm-$VMID.ppm" | qm monitor $VMID
+    --ostype l26 &&
+  sudo -n qm start $VMID &&
+  echo "screendump /tmp/vm-$VMID.ppm" | qm monitor $VMID   # 3. start  4. the screen without a browser (root)
 ```
 
 `order=scsi0;ide2` boots the disk first; an empty disk falls through to the
@@ -818,13 +826,13 @@ sudo -n vzdump --all 1 --storage <backup-storage> --mode snapshot --compress zst
 ```
 
 **Checking a backup, measured on PVE 9.2.2.** Three checks catch different
-failures; only the last one proves the data:
+failures; only the last one proves data, and only the data it reads:
 
 | Check | Catches | Misses |
 |---|---|---|
 | `zstd -tq <file>.vma.zst` | bit rot in the stored file (vzdump writes an XXH64 checksum) | anything wrong before compression |
 | `zstd -dc <file>.vma.zst \| vma verify -` | truncation, damaged headers and structure | corrupted VM data: 4 of 4 archives with flipped data bytes passed |
-| restore to a scratch VMID and read known data | everything above, plus whether it boots | — |
+| restore to a scratch VMID and read known data | an unrestorable archive, whether it boots, damage to the data you read | damage anywhere you didn't read |
 
 Run `vma verify` on a stream as above. Do not decompress to `/tmp`: on PVE 9
 `/tmp` is a RAM-backed tmpfs, so a large backup fills memory. In a pipeline,
@@ -836,44 +844,51 @@ the original's `netN` gives the copy the original's MAC and undoes `unique=1`.
 
 ```bash
 source scripts/pve-api.sh   # see its header for PVE_HOST and the two files
-node='<node>' copy='<free scratch VMID>' file='<path with known content>'
+node='<node>' copy='<free scratch VMID>' file='<path with known content>' expect='<the known content>'
 archive='<storage>:backup/vzdump-qemu-<vmid>-<ts>.vma.zst'
 storage='<vm-storage>' pool='<pool>'   # pool='' outside Mode A-narrow
 
 # 1. Restore to a free VMID and wait.  2. Unplug every NIC, clear onboot and
 #    protection, read it back.  3. Only then start, and read the file through
-#    the guest agent (no network needed).
-if upid=$(pve_api POST "/nodes/$node/qemu" \
+#    the guest agent (no network needed). Exit status 0 means the data matched.
+restored=
+if pve_task POST "/nodes/$node/qemu" \
       --data-urlencode "vmid=$copy" --data-urlencode "archive=$archive" \
       --data-urlencode "storage=$storage" --data-urlencode unique=1 \
-      ${pool:+--data-urlencode "pool=$pool"} | jq -r .data) &&
-   pve_wait "$upid" 1800 &&
+      ${pool:+--data-urlencode "pool=$pool"} &&
+   restored=$node/$copy &&
    pve_isolate_copy "$node" "$copy" &&
-   upid=$(pve_api POST "/nodes/$node/qemu/$copy/status/start" | jq -r .data) &&
-   pve_wait "$upid" 120
+   pve_task POST "/nodes/$node/qemu/$copy/status/start"
 then
   got=
   for _ in {1..60}; do
     got=$(pve_api GET "/nodes/$node/qemu/$copy/agent/file-read" -G \
-      --data-urlencode "file=$file" | jq -r '.data.content // empty')
+      --data-urlencode "file=$file" 2>/dev/null | jq -r '.data.content // empty') || got=
     [[ -n $got ]] && break
     sleep 5
   done
-  echo "read from the copy: ${got:-nothing (data not proven)}"
+  if [[ -z $got ]]; then
+    echo "nothing read from the copy: neither boot nor data is proven" >&2; false
+  elif [[ $got != "$expect" ]]; then
+    echo "MISMATCH, read from the copy: $got" >&2; false
+  else
+    echo "data matched: $got"
+  fi
 else
-  echo "restore test stopped: nothing is proven" >&2
+  echo "restore test stopped: nothing is proven" >&2; false
 fi
 ```
 
-Compare what was read with what you expected. If the restore itself failed,
-`$copy` may be someone else's guest: leave it alone. Otherwise, after the
-user's yes, remove the copy and keep the backup:
+If the restore itself failed, `$copy` may be someone else's guest: leave it
+alone. The block below runs only in the shell where the restore succeeded
+(`$restored` is set then). After the user's yes, it removes the copy and keeps
+the backup:
 
 ```bash
-upid=$(pve_api POST "/nodes/$node/qemu/$copy/status/stop" | jq -r .data) &&
-  pve_wait "$upid" 120 &&
-  upid=$(pve_api DELETE "/nodes/$node/qemu/$copy?purge=1" | jq -r .data) &&
-  pve_wait "$upid"
+[[ -n ${restored:-} && $restored == "$node/$copy" ]] &&
+  pve_api PUT "/nodes/$node/qemu/$copy/config" --data-urlencode protection=0 >/dev/null &&
+  pve_task POST "/nodes/$node/qemu/$copy/status/stop" &&
+  pve_task DELETE "/nodes/$node/qemu/$copy?purge=1"
 ```
 
 **Why unplug it:** a restored copy keeps the original's `/etc/machine-id`.
@@ -898,26 +913,27 @@ agent off, and nobody is left to undo it. Arm a revert timer first, apply,
 verify from the agent's side, and only then disarm. Mode A, root SSH:
 
 ```bash
+# One chain, so paste it whole: no timer means no apply, and a failed apply or
+# an empty verify leaves the timer to revert.
 # 0. Refuse to start if someone else has pending, unapplied network changes.
-ssh root@<host> 'test ! -e /etc/network/interfaces.new || { echo "pending changes exist"; exit 1; }'
-
 # 1. Back up and arm a 120 s revert. AccuracySec=1s matters: systemd timers
 #    default to 1 minute of slack, so a "120 s" timer can fire much later.
+# 2. Stage and apply through the API (staged changes go to /etc/network/interfaces.new).
+# 3. Verify over the SAME path the agent uses, then disarm.
+#    jq -es, not -e: jq 1.6 exits 0 for -e on empty input.
+ssh root@<host> 'test ! -e /etc/network/interfaces.new || { echo "pending changes exist"; exit 1; }' &&
 ssh root@<host> 'cp -a /etc/network/interfaces /root/interfaces.pre-agent &&
   systemd-run --unit=net-revert --on-active=120 --timer-property=AccuracySec=1s \
-    /bin/sh -c "cp -a /root/interfaces.pre-agent /etc/network/interfaces && ifreload -a"'
-
-# 2. Stage and apply through the API (staged changes go to /etc/network/interfaces.new).
-pve_api POST /nodes/<node>/network --data-urlencode iface=vmbr10 --data-urlencode type=bridge --data-urlencode autostart=1
-upid=$(pve_api PUT /nodes/<node>/network | jq -r .data); pve_wait "$upid" 60
-
-# 3. Verify over the SAME path the agent uses, then disarm.
+    /bin/sh -c "cp -a /root/interfaces.pre-agent /etc/network/interfaces && ifreload -a"' &&
+pve_api POST /nodes/<node>/network --data-urlencode iface=vmbr10 --data-urlencode type=bridge --data-urlencode autostart=1 &&
+pve_task PUT /nodes/<node>/network &&
 ssh -o ConnectTimeout=5 root@<host> true &&
-  pve_api GET /nodes/<node>/network/vmbr10 | jq -e '.data.active == 1' >/dev/null &&
-  ssh root@<host> 'systemctl stop net-revert.timer'
+  pve_api GET /nodes/<node>/network/vmbr10 | jq -es 'length == 1 and .[0].data.active == 1' >/dev/null &&
+  ssh root@<host> 'systemctl stop net-revert.timer' &&
+  echo "applied, verified, revert disarmed"
 ```
 
-If step 3 fails, do nothing: the timer restores the old file and reloads.
+Without that last line it is not done. Do nothing more: an armed timer restores the old file and reloads.
 `DELETE /nodes/<node>/network` discards staged changes that were never applied.
 Tested on PVE 9.2.2: the transient timer fires on time and `systemctl stop`
 disarms it. A real lockout being reverted was not exercised for this release;
@@ -986,14 +1002,14 @@ depends on what changed:
 | Operation | Verify with |
 |---|---|
 | Created VM | `qm list`, then `qm status <vmid>`, then `pvesh get /cluster/resources --type vm` |
-| Started VM | `qm status <vmid>` shows `status: running`, console reachable |
+| Started VM | `qm status <vmid>` shows `status: running` (QEMU is up); the guest agent or console answering is what proves it booted |
 | Stopped VM | `qm status <vmid>` shows `status: stopped` |
 | Snapshotted VM | `qm listsnapshot <vmid>` lists the new snapname |
-| Created LXC | `pct list`, then `pct status <ctid>` |
+| Created LXC | `pct status <ctid>` (`pct create --start` exits 0 when the start fails) |
 | Added storage | `pvesm status` shows the new storage, `df -h /mnt/<mount>` shows correct size |
 | Imported ISO | `ls /var/lib/vz/template/iso/` shows the file, `pvesh get /nodes/.../storage/local/content --content iso` lists it |
-| Created backup | `ls /var/lib/vz/dump/` shows the .vma.zst file |
-| Restored backup | `qm list` shows new VMID, `qm status <new-vmid>` reports running |
+| Created backup | the task ended `OK` and the storage lists the new volid; only the restore test above proves its data |
+| Restored backup | the task ended `OK`, then the restore test above matched known data (`running` proves neither boot nor data) |
 | Edited firewall | `pvesh get /nodes/<node>/firewall/rules` shows the new rule, test from allowed source |
 
 **Always verify the *full* state, not just the immediate operation.**
@@ -1093,9 +1109,9 @@ root. Verify the destination with `pvesh get /nodes/<node>/storage/<storage>/con
 
 ### 8. `qm list` returns empty — is the agent broken?
 
-No. It means there are no VMs. Verify with `sudo -n -l` from the agent
-user to confirm the command itself ran (the output will list every
-allowlisted rule). Empty `qm list` output is a feature, not a bug.
+Check before saying so. `sudo -n qm list` exiting 0 with no rows means there
+are no VMs on that node (not the whole cluster). A non-zero exit is a failure.
+Through the API an empty list can also mean the token may not see them.
 
 ### 9. The web shell shows `about:blank` and the user is stuck
 
@@ -1306,9 +1322,11 @@ Stop and tell the user before a write would push the pool past about 80%.
 ## Scripts
 
 - `scripts/pve-api.sh` — source it for `pve_api` (pinned TLS, token read from
-  a file per call), `pve_wait` (task exit status, log on failure, timeout),
+  a file per call, non-zero on a refusal), `pve_wait` (task exit status, log on
+  failure, timeout), `pve_task` (a write plus that wait),
   `pve_vm_ip` (guest-agent IP polling) and `pve_isolate_copy` (a restored
-  copy's NICs down before its first start). Tested by `tests/pve-api.test.sh`.
+  copy's NICs down before its first start). Tested by `tests/pve-api.test.sh`
+  and `tests/checks.test.sh`.
 - `scripts/vm-from-iso.sh` — wrapper around `qm create`: checks the ISO
   exists, uses the next free VMID unless `--vmid` is given, boots disk then
   ISO. Works as root without sudo. Tested on PVE 9.2.2.
@@ -1316,8 +1334,8 @@ Stop and tell the user before a write would push the pool past about 80%.
   template exists, optional `--ssh-key`, unprivileged by default. Works as
   root without sudo. Tested on PVE 9.2.2.
 - `scripts/iso-import.sh` — Ventoy USB → `<mount>/template/iso/` with a
-  pre-flight size check (refuses to overflow the target fs) and per-file
-  verification, then lists what Proxmox sees. Run on the Proxmox host as root.
+  pre-flight size check (refuses to overflow the target fs) and a byte
+  comparison of each copy, then lists what Proxmox sees. Run on the Proxmox host as root.
 - `scripts/add-nvme-storage.sh` — full pipeline walkthrough: identify
   drives by serial, prompt the user to confirm scope, give fdisk
   instructions for 1-or-2 partition layouts, instruct on mkfs+mount,

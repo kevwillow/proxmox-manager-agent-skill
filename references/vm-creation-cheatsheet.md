@@ -44,6 +44,7 @@ qm create 100 \
 After install, switch boot order to disk-only and detach ISO:
 
 ```bash
+# Only if the create above succeeded: otherwise 100 is someone else's guest.
 qm set 100 --boot order=scsi0
 qm set 100 --ide2 none
 ```
@@ -71,10 +72,11 @@ qm create 101 \
 For headless VMs that auto-configure user/ssh/network on first boot:
 
 ```bash
+# Chained: a failed create means 102 is not yours to resize or convert.
 # 1. Download the cloud image to the host (or use the API's download-url with
 #    content=import and a checksum; see SKILL.md)
 wget https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img \
-    -O /root/noble-server-cloudimg-amd64.img
+    -O /root/noble-server-cloudimg-amd64.img &&
 
 # 2. Create the VM referencing that image as the disk source
 qm create 102 \
@@ -92,8 +94,8 @@ qm create 102 \
     --ciuser <user> \
     --ipconfig0 ip=dhcp \
     --ciupgrade 0 \
-    --sshkeys /root/.ssh/authorized_keys
-qm resize 102 scsi0 20G   # the imported disk is only as big as the image
+    --sshkeys /root/.ssh/authorized_keys &&
+qm resize 102 scsi0 20G &&   # the imported disk is only as big as the image
 
 # 3. Convert to a template for cloning (optional)
 qm template 102
