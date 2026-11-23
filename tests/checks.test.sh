@@ -569,6 +569,14 @@ check "runbook: snapshot name is unique" "$(grep -c 'unique new' "$R/runbooks/sn
 check "runbooks: the dev VM one is listed" "$(grep -c 'runbooks/clone_dev_vm.md' "$R/SKILL.md" | head -1)" 2
 check "runbook: dev VM identity is re-read before delete" "$(grep -c "re-read step 3's fields: stop unless unchanged" "$R/runbooks/clone_dev_vm.md")" 1
 check "runbook: dev VM never reads the cut address list" "$(grep -c 'network-get-interfaces' "$R/runbooks/clone_dev_vm.md")" 0
+check "runbooks: the container restore one is listed" "$(grep -c 'runbooks/ct_restore_test.md' "$R/SKILL.md" | head -1)" 2
+check "runbooks: the backup coverage one is listed" "$(grep -c 'runbooks/backup_coverage.md' "$R/SKILL.md" | head -1)" 2
+check "runbooks: the update check one is listed" "$(grep -c 'runbooks/update_check.md' "$R/SKILL.md" | head -1)" 2
+check "runbook: a container copy is stopped only if running" "$(grep -c 'If running, POST /nodes/{node}/lxc/{vmid}/status/stop' "$R/runbooks/ct_restore_test.md")" 1
+check "runbook: container data needs returncode 0" "$(grep -c 'need returncode 0' "$R/runbooks/ct_restore_test.md")" 1
+check "runbook: an unread storage makes no-backup unknown" "$(grep -c 'none or too old is unknown' "$R/runbooks/backup_coverage.md")" 1
+check "runbook: no pending updates only after an OK refresh" "$(grep -c "only if step 2's newest run was OK" "$R/runbooks/update_check.md")" 1
+check "runbooks: list reads never name fields on an empty list first" "$(grep -c 'read plain first' "$R/runbooks/backup_coverage.md" "$R/runbooks/update_check.md" | awk -F: '{s+=$2} END{print s}')" 2
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
 exit $fail

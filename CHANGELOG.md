@@ -2,7 +2,20 @@
 
 ## 1.6.0 (2026-11-22)
 
-Measured on PVE 9.2.2 with Proximo 0.56.0.
+Measured on PVE 9.2.2 with Proximo 0.56.0, and re-run on PVE 9.2.32.
+
+- Three more Proximo runbooks, each run live on PVE 9.2.32:
+  - `runbooks/ct_restore_test.md`: the restore test for containers. Container
+    backups leave out the system temp folders, so the known file must be
+    elsewhere. A task ending `WARNINGS` (the Debian 13 container tested warned
+    about nesting on restore and on each start) counts as finished and is reported.
+  - `runbooks/backup_coverage.md`, read-only: guests in no backup job, guests
+    with no recent backup, and storages that could not be read. A guest is
+    "unknown", never "none", while any storage is unread.
+  - `runbooks/update_check.md`, read-only: subscription, the last package index
+    refresh and whether it worked, repository problems, pending updates.
+  - Both read-only ones read lists plain first: Proximo refuses `fields=` on an
+    empty list, and an over-cap list can come back summarized with no data.
 
 - **Safety: the restore test could boot a copy on the network.** Run as
   written on a VM with two NICs it left `net1` up, kept `onboot=1` and

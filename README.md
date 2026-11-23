@@ -53,7 +53,9 @@ Proximo with a read-only token and a pool-scoped write token
 - The same procedure as a Proximo runbook: `runbooks/restore_test.md`, and a
   second one to change a VM with a snapshot to fall back on:
   `runbooks/snapshot_change.md`, and a third to build a dev VM from a
-  cloud-init template: `runbooks/clone_dev_vm.md`.
+  cloud-init template: `runbooks/clone_dev_vm.md`. Three more: a container
+  restore test (`runbooks/ct_restore_test.md`), and two read-only checks,
+  `runbooks/backup_coverage.md` and `runbooks/update_check.md`.
 - Proximo notes re-measured on 0.56.0.
 
 ## What was new in 1.5.0

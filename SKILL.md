@@ -56,7 +56,10 @@ work disarmed and let the user run `proximo arm` when a change is needed.
 Setup, the API paths, and measured gotchas are in `references/mcp-servers.md`.
 For a restore test through Proximo, follow `runbooks/restore_test.md`; before
 changing a VM through it, follow `runbooks/snapshot_change.md`; to build a
-dev VM from a cloud-init template, follow `runbooks/clone_dev_vm.md`.
+dev VM from a cloud-init template, follow `runbooks/clone_dev_vm.md`. For a
+container restore test, follow `runbooks/ct_restore_test.md`; to find guests
+with no recent backup, `runbooks/backup_coverage.md`; to check that a node can
+get updates, `runbooks/update_check.md`.
 
 ## When to Use
 
@@ -1348,6 +1351,13 @@ Stop and tell the user before a write would push the pool past about 80%.
   change, then keep it or prove the rollback.
 - `runbooks/clone_dev_vm.md` — build a dev VM through Proximo: full clone of
   a cloud-init template, user and key, boot, read the hostname back.
+- `runbooks/ct_restore_test.md` — prove a container backup through Proximo:
+  restore a copy, unplug every NIC, read known data through the container
+  lane, remove the copy.
+- `runbooks/backup_coverage.md` — read-only: guests in no backup job, guests
+  with no recent backup, and storages that could not be read.
+- `runbooks/update_check.md` — read-only: subscription, the last package index
+  refresh, repository problems and pending updates.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 
