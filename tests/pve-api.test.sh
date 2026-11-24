@@ -15,6 +15,16 @@ out=$(pve_wait "$UPID" 9); rc=$?; check "ok-task output" "$out" "OK"; check "ok-
 pve_api() { case $2 in */status) echo '{"data":{"status":"stopped","exitstatus":"clone failed: disk full"}}';; */log*) echo '{"data":[{"t":"line1"},{"t":"boom"}]}';; esac; }
 out=$(pve_wait "$UPID" 9 2>"$ERR"); rc=$?; check "failed-task rc" "$rc" 1; check "failed-task output" "$out" "clone failed: disk full"; check "failed-task log on stderr" "$(tail -1 "$ERR")" "boom"
 
+# A task that finished with warnings (e.g. a network apply on a host without the SDN source line)
+# ends "WARNINGS: <n>": it ran to the end, so it counts as done, and its log goes to stderr.
+pve_api() { case $2 in */status) echo '{"data":{"status":"stopped","exitstatus":"WARNINGS: 1"}}';; */log*) echo '{"data":[{"t":"WARN: missing source line"},{"t":"TASK WARNINGS: 1"}]}';; esac; }
+out=$(pve_wait "$UPID" 9 2>"$ERR"); rc=$?; check "warnings-task rc" "$rc" 0; check "warnings-task output" "$out" "WARNINGS: 1"; check "warnings-task log on stderr" "$(grep -c 'WARN: missing source line' "$ERR")" 1
+# Only that exact form: anything else that merely contains the word still fails.
+pve_api() { case $2 in */status) echo '{"data":{"status":"stopped","exitstatus":"WARNINGS: 1 then error: disk full"}}';; */log*) echo '{"data":[{"t":"x"}]}';; esac; }
+out=$(pve_wait "$UPID" 9 2>"$ERR"); rc=$?; check "warnings-lookalike rc" "$rc" 1
+pve_api() { case $2 in */status) echo '{"data":{"status":"stopped","exitstatus":"WARNINGS: "}}';; */log*) echo '{"data":[{"t":"x"}]}';; esac; }
+out=$(pve_wait "$UPID" 9 2>"$ERR"); rc=$?; check "warnings-without-count rc" "$rc" 1
+
 pve_api() { echo '{"data":{"status":"running"}}'; }
 out=$(pve_wait "$UPID" 9 2>"$ERR"); rc=$?; check "timeout rc" "$rc" 2; check "timeout msg" "$(grep -c TIMEOUT "$ERR")" 1
 

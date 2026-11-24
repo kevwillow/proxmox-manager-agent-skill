@@ -28,7 +28,8 @@ pve_api() {
 }
 
 # pve_wait UPID [timeout-seconds, default 600]
-# Waits for a task, prints its exit status, and returns 0 only on "OK".
+# Waits for a task, prints its exit status, and returns 0 on "OK" or "WARNINGS: <n>"
+# (the task ran to the end with warnings; its log goes to stderr so they are seen).
 # Returns 1 at once if given something that is not a UPID.
 # On failure it prints the task's last log lines to stderr and returns 1.
 # On timeout it returns 2; the task keeps running on the host.
@@ -48,6 +49,10 @@ pve_wait() {
       exitstatus=$(jq -r '.data.exitstatus' <<<"$status")
       echo "$exitstatus"
       [[ $exitstatus == OK ]] && return 0
+      if [[ $exitstatus =~ ^WARNINGS:\ [0-9]+$ ]]; then
+        pve_api GET "/nodes/$node/tasks/$enc/log?limit=500" | jq -r '.data[].t' | tail -20 >&2 || true
+        return 0
+      fi
       pve_api GET "/nodes/$node/tasks/$enc/log?limit=500" | jq -r '.data[].t' | tail -20 >&2 || true
       return 1
     fi
@@ -59,7 +64,7 @@ pve_wait() {
 
 # pve_task METHOD PATH [curl args...]
 # Sends a write that starts a task and waits up to 30 minutes for it.
-# Returns 0 only if the write was accepted and the task ended OK.
+# Returns 0 only if the write was accepted and the task ended OK (or WARNINGS: <n>).
 pve_task() {
   local reply upid
   if ! reply=$(pve_api "$@"); then

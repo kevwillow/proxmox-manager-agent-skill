@@ -55,7 +55,11 @@ Proximo with a read-only token and a pool-scoped write token
   `runbooks/snapshot_change.md`, and a third to build a dev VM from a
   cloud-init template: `runbooks/clone_dev_vm.md`. Three more: a container
   restore test (`runbooks/ct_restore_test.md`), and two read-only checks,
-  `runbooks/backup_coverage.md` and `runbooks/update_check.md`.
+  `runbooks/backup_coverage.md` and `runbooks/update_check.md`. Five more:
+  three read-only checks (`runbooks/backup_failures.md`,
+  `runbooks/storage_capacity.md`, `runbooks/cert_expiry.md`), snapshot cleanup
+  (`runbooks/snapshot_hygiene.md`) and guest removal
+  (`runbooks/decommission_guest.md`).
 - Proximo notes re-measured on 0.56.0.
 
 ## What was new in 1.5.0

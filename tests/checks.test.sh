@@ -564,11 +564,22 @@ check "runbooks: both are listed" "$(grep -c 'runbooks/snapshot_change.md' "$R/S
 
 check "network: run id is unique within a second" "$(block SKILL.md 'net-revert' | grep -c 'run=$(date +%s)-')" 1
 check "network: a running revert is not 'disarmed'" "$(block SKILL.md 'net-revert' | grep -c 'is-active net-revert')" 1
-check "runbook: the copy's identity is re-read before delete" "$(grep -c "Re-read step 4's" "$R/runbooks/restore_test.md")" 1
+check "runbook: the copy is re-read against the post-isolation read-back before stop and delete" "$(grep -c "^8\. Re-read step 5's read-back fields: stop unless unchanged\." "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
+check "runbook: restore's first config read names only the links and devices (absent keys are refused)" "$(grep -c -E 'with fields naming only every netN(, serialN and ide, sata, scsi, virtio key| and mpN)\.' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
+check "runbook: restore stops on a host device disk" "$(grep -c 'or a disk starts with / (host device)' "$R/runbooks/restore_test.md")" 1
+check "runbook: a failed container exec is data not proven, not a stop" "$(grep -c 'else (a failed exec too): data not proven' "$R/runbooks/ct_restore_test.md")" 1
+check "runbook: dev VM names only the disk keys the key list has" "$(grep -c 'each ide, sata, scsi, virtio key in that list (only those)' "$R/runbooks/clone_dev_vm.md")" 1
+check "runbook: dev VM needs net0 and calls the address unproven" "$(grep -c -e 'and net0 is listed' -e 'Address, user and key stay unproven' "$R/runbooks/clone_dev_vm.md")" 2
+check "runbook: ACME set up is not called renewal proven" "$(grep -c 'renewal not proven' "$R/runbooks/cert_expiry.md")" 1
+check "runbook: restore isolates in its own step" "$(grep -c '^5\. Isolate it\.' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
+check "runbook: restore starts only after the isolation read-back" "$(grep -c '^6\. Only if step 5 read back link_down=1 on each netN and both flags 0: POST' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
+check "runbooks: the operator, not the agent, closes the lane" "$(grep -c -E '^Report .*(Operator|The operator) closes the (agent )?lane\.$' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" "$R/runbooks/clone_dev_vm.md" | awk -F: '{s+=$2} END{print s}')" 3
 check "runbook: snapshot name is unique" "$(grep -c 'unique new' "$R/runbooks/snapshot_change.md")" 1
 check "runbooks: the dev VM one is listed" "$(grep -c 'runbooks/clone_dev_vm.md' "$R/SKILL.md" | head -1)" 2
 check "runbook: dev VM identity is re-read before delete" "$(grep -c "re-read step 3's fields: stop unless unchanged" "$R/runbooks/clone_dev_vm.md")" 1
 check "runbook: dev VM never reads the cut address list" "$(grep -c 'network-get-interfaces' "$R/runbooks/clone_dev_vm.md")" 0
+check "runbook: dev VM tells the agent not to read the address list" "$(grep -c 'Never read its address list' "$R/runbooks/clone_dev_vm.md")" 1
+check "runbook: dev VM reports net0's MAC for DHCP" "$(grep -c "address (or net0's MAC)" "$R/runbooks/clone_dev_vm.md")" 1
 check "runbooks: the container restore one is listed" "$(grep -c 'runbooks/ct_restore_test.md' "$R/SKILL.md" | head -1)" 2
 check "runbooks: the backup coverage one is listed" "$(grep -c 'runbooks/backup_coverage.md' "$R/SKILL.md" | head -1)" 2
 check "runbooks: the update check one is listed" "$(grep -c 'runbooks/update_check.md' "$R/SKILL.md" | head -1)" 2
@@ -576,6 +587,22 @@ check "runbook: a container copy is stopped only if running" "$(grep -c 'If runn
 check "runbook: container data needs returncode 0" "$(grep -c 'need returncode 0' "$R/runbooks/ct_restore_test.md")" 1
 check "runbook: an unread storage makes no-backup unknown" "$(grep -c 'none or too old is unknown' "$R/runbooks/backup_coverage.md")" 1
 check "runbook: no pending updates only after an OK refresh" "$(grep -c "only if step 2's newest run was OK" "$R/runbooks/update_check.md")" 1
+for n in backup_failures storage_capacity cert_expiry snapshot_hygiene decommission_guest; do
+  check "runbooks: $n is listed" "$(grep -c "runbooks/$n.md" "$R/SKILL.md")" 2
+done
+check "runbook: a backup that warned is its own class, by exact form" "$(grep -c 'Exactly WARNINGS: and a number finished with warnings' "$R/runbooks/backup_failures.md")" 1
+check "runbook: backup task lists are read in pages that fit" "$(grep -c 'limit=4, start=0' "$R/runbooks/backup_failures.md")" 1
+check "runbook: a job with no run seen is not called a failure" "$(grep -c 'That is not a failure: it may not have been due' "$R/runbooks/backup_failures.md")" 1
+check "runbook: overcommit unread or refused is unknown, with the permission named" "$(grep -c 'Unread or refused (Proxmox lists disks only with VM.Config.Disk' "$R/runbooks/storage_capacity.md")" 1
+check "runbook: thin pool metadata is checked" "$(grep -c 'metadata_size,metadata_used' "$R/runbooks/storage_capacity.md")" 1
+check "runbooks: now comes from the node, not the agent's clock" "$(grep -c 'GET /nodes/{node}/time' "$R/runbooks/cert_expiry.md" "$R/runbooks/backup_failures.md" "$R/runbooks/snapshot_hygiene.md" | awk -F: '{s+=$2} END{print s}')" 3
+check "runbook: snapshots are deleted only when picked, each on its own yes" "$(grep -c -e 'nothing is deleted unpicked' -e 'For each pick, on its own yes: re-read step 2' "$R/runbooks/snapshot_hygiene.md")" 2
+check "runbook: decommission names protection, lock and template only if listed" "$(grep -c 'each of protection, lock, template only if the key list has it' "$R/runbooks/decommission_guest.md")" 1
+check "runbook: decommission stops on protection, a lock or a template" "$(grep -c 'Stop if protection is 1, lock is set, or template is 1' "$R/runbooks/decommission_guest.md")" 1
+check "runbook: decommission never destroys unreferenced disks" "$(grep -c 'destroy-unreferenced-disks' "$R/runbooks/decommission_guest.md")" 0
+check "runbook: decommission shuts down gracefully, never forces" "$(grep -c -e 'status/shutdown with timeout=120' -e "a forced stop is the operator's call" "$R/runbooks/decommission_guest.md")" 1
+check "runbook: decommission re-reads identity before stop and delete" "$(grep -c "re-read step 1's fields" "$R/runbooks/decommission_guest.md")" 2
+check "runbook: decommission keeps the backups and unreferenced disks" "$(grep -c 'Backups and disks it did not reference stay' "$R/runbooks/decommission_guest.md")" 1
 check "runbooks: list reads never name fields on an empty list first" "$(grep -c 'read plain first' "$R/runbooks/backup_coverage.md" "$R/runbooks/update_check.md" | awk -F: '{s+=$2} END{print s}')" 2
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found

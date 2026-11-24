@@ -59,7 +59,11 @@ changing a VM through it, follow `runbooks/snapshot_change.md`; to build a
 dev VM from a cloud-init template, follow `runbooks/clone_dev_vm.md`. For a
 container restore test, follow `runbooks/ct_restore_test.md`; to find guests
 with no recent backup, `runbooks/backup_coverage.md`; to check that a node can
-get updates, `runbooks/update_check.md`.
+get updates, `runbooks/update_check.md`. Read-only checks: backups that failed
+or warned, `runbooks/backup_failures.md`; storage nearly full or overcommitted,
+`runbooks/storage_capacity.md`; certificate expiry, `runbooks/cert_expiry.md`.
+To find and delete old or leftover snapshots, `runbooks/snapshot_hygiene.md`;
+to remove a guest for good, `runbooks/decommission_guest.md`.
 
 ## When to Use
 
@@ -146,7 +150,7 @@ pve_api GET '/cluster/resources?type=vm'
 pve_api GET '/nodes/<node>/status'
 reply=$(pve_api POST '/nodes/<node>/qemu/<vmid>/clone' --data-urlencode 'newid=<new-vmid>') &&
 upid=$(jq -r .data <<<"$reply") &&
-pve_wait "$upid" 300 &&   # prints the exit status; returns 0 only on "OK", 1 on failure (task log to stderr), 2 on timeout
+pve_wait "$upid" 300 &&   # prints the exit status; returns 0 on "OK" or "WARNINGS: <n>", 1 on failure (task log to stderr), 2 on timeout
 pve_task POST '/nodes/<node>/qemu/<new-vmid>/status/start' &&   # both in one: send, then wait
 pve_vm_ip <node> <new-vmid> 180   # first IPv4 from the guest agent, polling until it answers
 ```
@@ -1358,6 +1362,16 @@ Stop and tell the user before a write would push the pool past about 80%.
   with no recent backup, and storages that could not be read.
 - `runbooks/update_check.md` — read-only: subscription, the last package index
   refresh, repository problems and pending updates.
+- `runbooks/backup_failures.md` — read-only: backups in a window that failed or
+  warned, with the log line, and jobs with no run seen.
+- `runbooks/storage_capacity.md` — read-only: storage nearly full, thin pool
+  data or metadata nearly full, and overcommitted thin pools.
+- `runbooks/cert_expiry.md` — read-only: days left on each node certificate,
+  which one the web UI serves, and whether ACME is set up for it (not proven to renew).
+- `runbooks/snapshot_hygiene.md` — old snapshots and Proximo's leftover
+  `proximo_` ones; deletes only the ones the operator picks.
+- `runbooks/decommission_guest.md` — remove a guest for good: identity,
+  protection, a backup to keep, its HA entry and jobs, then delete with purge.
 - `references/cluster.md` — joining nodes to a cluster, quorum,
   HA setup, fencing.
 
