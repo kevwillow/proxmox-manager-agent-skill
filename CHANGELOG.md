@@ -1,13 +1,33 @@
 # Changelog
 
-## 1.6.0 (2026-11-22)
+## 1.6.0 (2026-11-25)
 
 Measured on PVE 9.2.2 with Proximo 0.56.0, and re-run on PVE 9.2.32 and 8.4.21.
 All eleven runbooks were also followed by an AI agent on 9.2.32 and 8.4.21. On PVE 8,
 listing pending updates needs `Sys.Modify` on the node, so with an audit-only token
 `update_check.md` reports them unread.
 
-- Three more Proximo runbooks, each run live on PVE 9.2.32:
+- **Multi-node, measured on a two-node PVE 9.2.41 cluster:** the test guests on one
+  node, Proximo talking to the other. The scripted suite passed (52/52) and an AI agent
+  followed all eleven runbooks clean. `backup_failures` and `backup_coverage` read every
+  node, as written; `cert_expiry` and `storage_capacity` were given one node and
+  read only that one.
+- **The restore test's host-device stop, measured on 9.2.41:** a restore to a new id
+  never kept a disk path starting with `/`. With the default, PVE backed up the
+  passed-through disk and restored it as a new volume of the same size; with
+  `backup=0` the copy had no such disk. The stop stays as a guard. Not run on PVE 8,
+  and multi-node not run on PVE 8 or with shared storage, HA or live migration.
+- **Wording fixes in nine runbooks from a last proofread,** each with a check that fails on
+  the old text: the dev VM clean-up runs only after a failed step; `net0` is checked in the key
+  list; the snapshot restart applies only after a rollback; an offline node makes no-backup
+  unknown; the update report names repository warnings; `proximo_` snapshots match by prefix;
+  the restore copy's stop and delete read as two steps; and two grammar slips. On the final
+  text a fresh Claude Code session, with only Proximo's tools, followed all eleven on nested
+  PVE 9.3.1. Every check passed after two harness fixes (one check misread the agent's
+  "not every backup succeeded", so that report was re-scored; one trial lacked the
+  operator's answer for an unreadable storage, so it was re-run).
+
+- Three Proximo runbooks, each run live on PVE 9.2.32:
   - `runbooks/ct_restore_test.md`: the restore test for containers. Container
     backups leave out the system temp folders, so the known file must be
     elsewhere. A task ending `WARNINGS` (the Debian 13 container tested warned
@@ -20,7 +40,7 @@ listing pending updates needs `Sys.Modify` on the node, so with an audit-only to
   - Both read-only ones read lists plain first: Proximo refuses `fields=` on an
     empty list, and an over-cap list can come back summarized with no data.
 
-- Five more Proximo runbooks, each run live on PVE 9.2.32 with an AI agent
+- Five Proximo runbooks, each run live on PVE 9.2.32 with an AI agent
   following it unaided and root checking the result:
   - `runbooks/backup_failures.md`, read-only: backups in a window that failed
     or warned (job runs cover many guests, so it reads each log, in pages),
@@ -37,7 +57,7 @@ listing pending updates needs `Sys.Modify` on the node, so with an audit-only to
   - `runbooks/decommission_guest.md`: remove a guest for good. Stops on
     protection or a lock, reports the backup kept, its HA entry and backup
     jobs, and re-reads its identity before the stop and the delete.
-- **Safety: the restore test could boot a copy on the network.** Run as
+- **Safety: the restore test recipe could boot a copy on the network.** Run as
   written on a VM with two NICs it left `net1` up, kept `onboot=1` and
   `protection=1`, failed silently when the restore was still running, and
   gave the copy the original's MAC when `net0` was taken from the original.
@@ -49,17 +69,17 @@ listing pending updates needs `Sys.Modify` on the node, so with an audit-only to
   compared the typed serial with sysfs, which pads NVMe serials and has none
   for SATA. It also accepted a typo, an empty answer or a partition. All are
   refused now, and so is any disk that is not blank: the script no longer
-  repurposes used disks, the user clears those by hand.
+  repurposes used disks; the user clears those by hand.
 - **`pve_wait` counted a task that ended `WARNINGS: <n>` as failed.** Found by
   running the network dead-man recipe on a host whose interfaces file has no
   SDN `source` line: the apply warns, so the chain stopped before disarming
   and the timer rolled back a good change. `pve_wait` and `pve_task` now
-  return 0 on exactly `WARNINGS: <number>` and print the task's log to
+  also return 0 on exactly `WARNINGS: <number>` and print the task's log to
   stderr; anything else still fails.
 - **Runbook fixes from an AI agent following each one unaided** (Codex, with
   only Proximo's tools): the restore tests now take the copy's links down in
   their own step and start it only after the read-back (one agent run started
-  the copy with the gate buried mid-step); the dev VM never reads the guest's
+  the copy with the gate buried mid-step); the dev VM runbook never reads the guest's
   address list, which Proximo always cuts (with DHCP the operator matches
   net0's MAC to a lease).
 - **A failed, empty or cut check no longer reads as success:**
@@ -79,7 +99,7 @@ listing pending updates needs `Sys.Modify` on the node, so with an audit-only to
     checks the container is running; `iso-import` compares bytes; the sudoers
     smoke test runs a real command.
   - An empty guest list is no longer called proof of no guests.
-  - The cluster "tag all" loop is gone: it never worked, and fixed it would
+  - The cluster "tag all" loop is gone: it never worked, and if fixed it would
     have overwritten every guest's tags.
 - The `proximo arm` notes now describe the ticket login (0.52+).
 - Examples use stock storage names (`local-lvm`, `local`) or neutral ones

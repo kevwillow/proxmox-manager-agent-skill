@@ -569,7 +569,7 @@ check "runbook: restore's first config read names only the links and devices (ab
 check "runbook: restore stops on a host device disk" "$(grep -c 'or a disk starts with / (host device)' "$R/runbooks/restore_test.md")" 1
 check "runbook: a failed container exec is data not proven, not a stop" "$(grep -c 'else (a failed exec too): data not proven' "$R/runbooks/ct_restore_test.md")" 1
 check "runbook: dev VM names only the disk keys the key list has" "$(grep -c 'each ide, sata, scsi, virtio key in that list (only those)' "$R/runbooks/clone_dev_vm.md")" 1
-check "runbook: dev VM needs net0 and calls the address unproven" "$(grep -c -e 'and net0 is listed' -e 'Address, user and key stay unproven' "$R/runbooks/clone_dev_vm.md")" 2
+check "runbook: dev VM needs net0 and calls the address unproven" "$(grep -c -e 'with fields=key (no net0: stop)' -e 'Address, user and key stay unproven' "$R/runbooks/clone_dev_vm.md")" 2
 check "runbook: ACME set up is not called renewal proven" "$(grep -c 'renewal not proven' "$R/runbooks/cert_expiry.md")" 1
 check "runbook: restore isolates in its own step" "$(grep -c '^5\. Isolate it\.' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
 check "runbook: restore starts only after the isolation read-back" "$(grep -c '^6\. Only if step 5 read back link_down=1 on each netN and both flags 0: POST' "$R/runbooks/restore_test.md" "$R/runbooks/ct_restore_test.md" | awk -F: '{s+=$2} END{print s}')" 2
@@ -602,7 +602,15 @@ check "runbook: decommission stops on protection, a lock or a template" "$(grep 
 check "runbook: decommission never destroys unreferenced disks" "$(grep -c 'destroy-unreferenced-disks' "$R/runbooks/decommission_guest.md")" 0
 check "runbook: decommission shuts down gracefully, never forces" "$(grep -c -e 'status/shutdown with timeout=120' -e "a forced stop is the operator's call" "$R/runbooks/decommission_guest.md")" 1
 check "runbook: decommission re-reads identity before stop and delete" "$(grep -c "re-read step 1's fields" "$R/runbooks/decommission_guest.md")" 2
-check "runbook: decommission keeps the backups and unreferenced disks" "$(grep -c 'Backups and disks it did not reference stay' "$R/runbooks/decommission_guest.md")" 1
+check "runbook: decommission keeps the backups and unreferenced disks" "$(grep -c 'All backups and unreferenced disks stay' "$R/runbooks/decommission_guest.md")" 1
+check "runbook: an offline node makes no-backup unknown, as an unread storage does" "$(grep -c -e 'While any node or storage is unread' -e 'nodes or storages unread' "$R/runbooks/backup_coverage.md")" 2
+check "runbook: the all-clear needs no failed, warned or running backup" "$(grep -c 'only when the first three are empty' "$R/runbooks/backup_failures.md")" 1
+check "runbook: an unread node config is ACME unknown" "$(grep -c 'Unread: ACME unknown' "$R/runbooks/cert_expiry.md")" 1
+check "runbook: dev VM clean-up is only for a failed step" "$(grep -c '^6\. If a step after 3 failed: report it and, on a separate yes,' "$R/runbooks/clone_dev_vm.md")" 1
+check "runbook: restore copy stop and delete are separate steps" "$(grep -c 'status/stop; on a separate yes re-read' "$R/runbooks/restore_test.md")" 1
+check "runbook: snapshot restart applies only after a rollback" "$(grep -c '^7\. After a rollback the VM is stopped\.' "$R/runbooks/snapshot_change.md")" 1
+check "runbook: proximo_ snapshots are matched by prefix" "$(grep -c 'any starting with proximo_' "$R/runbooks/snapshot_hygiene.md")" 1
+check "runbook: update report includes repository warnings" "$(grep -c 'repository errors and warnings, and the pending' "$R/runbooks/update_check.md")" 1
 check "runbooks: list reads never name fields on an empty list first" "$(grep -c 'read plain first' "$R/runbooks/backup_coverage.md" "$R/runbooks/update_check.md" | awk -F: '{s+=$2} END{print s}')" 2
 
 check "every recipe under test was found" "$([[ -e $T/missing ]] && echo missing || echo found)" found
