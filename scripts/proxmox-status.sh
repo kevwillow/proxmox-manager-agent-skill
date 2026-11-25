@@ -9,6 +9,17 @@
 
 set -uo pipefail
 
+SUDO=""
+[[ $EUID -ne 0 ]] && SUDO="sudo -n"
+failed=0
+# A read that fails is unknown, which is not the same as empty.
+show() {
+    if ! "$@" 2>&1; then
+        echo "!! FAILED: $* (this section is unknown, not empty)"
+        failed=1
+    fi
+}
+
 echo "========================================"
 echo " Proxmox node: $(hostname)"
 echo " $(date)"
@@ -16,49 +27,51 @@ echo "========================================"
 
 echo
 echo "=== Uptime / Load ==="
-uptime
+show uptime
 
 echo
 echo "=== Memory ==="
-free -h | grep -E '^Mem|^Swap'
+show free -h
 
 echo
 echo "=== Root disk ==="
-df -h / /boot/efi 2>/dev/null | grep -v Filesystem
+show df -h /
+if [[ -d /boot/efi ]]; then show df -h /boot/efi; fi
 
 echo
 echo "=== Block devices ==="
-lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL | grep -v '^loop'
+show lsblk -e7 -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINT,MODEL
 
 echo
 echo "=== Proxmox version ==="
-pvesh get /version 2>/dev/null | head -10
+show $SUDO pvesh get /version
 
 echo
 echo "=== Node resources ==="
-pvesh get "/nodes/$(hostname)/status" 2>/dev/null | head -20
+show $SUDO pvesh get "/nodes/$(hostname)/status"
 
 echo
 echo "=== Storage pools ==="
-pvesm status 2>/dev/null
+show $SUDO pvesm status
 
 echo
 echo "=== VMs ==="
-qm list 2>/dev/null
+show $SUDO qm list
 
 echo
 echo "=== LXC containers ==="
-pct list 2>/dev/null
+show $SUDO pct list
 
 echo
 echo "=== Recent errors in pvedaemon.log (last 20 lines) ==="
-journalctl -u pvedaemon --no-pager -n 20 -p err 2>/dev/null | tail -20
+show $SUDO journalctl -u pvedaemon --no-pager -n 20 -p err
 
 echo
 echo "=== Recent errors in pveproxy.log (last 20 lines) ==="
-journalctl -u pveproxy --no-pager -n 20 -p err 2>/dev/null | tail -20
+show $SUDO journalctl -u pveproxy --no-pager -n 20 -p err
 
 echo
 echo "========================================"
-echo " Done."
+if (( failed )); then echo " Done, with FAILED reads above."; else echo " Done."; fi
 echo "========================================"
+exit "$failed"

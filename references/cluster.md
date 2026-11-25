@@ -17,10 +17,10 @@ most purposes.
 
 ```bash
 # On the new node (must have same PVE version)
-pvecm add <existing-node-ip> -link0 <ip>
+pvecm add <existing-node-ip> -link0 <ip> &&
 
 # Verify
-pvecm status
+pvecm status &&
 pvecm nodes
 ```
 
@@ -62,14 +62,14 @@ cluster (three or more nodes) and storage every candidate node can reach.
 
 ```bash
 # Put a VM under HA
-ha-manager add vm:100 --max_restart 3 --max_relocate 2
+ha-manager add vm:100 --max_restart 3 --max_relocate 2 &&
 
 # PVE 9: HA rules replace HA groups. Prefer node1, then node2:
-ha-manager rules add node-affinity prefer-node1 --resources vm:100 --nodes "node1:2,node2:1"
+ha-manager rules add node-affinity prefer-node1 --resources vm:100 --nodes "node1:2,node2:1" &&
 # Keep two VMs on separate nodes:
-ha-manager rules add resource-affinity spread-db --resources vm:101,vm:102 --affinity negative
+ha-manager rules add resource-affinity spread-db --resources vm:101,vm:102 --affinity negative &&
 
-ha-manager status
+ha-manager status &&
 ha-manager rules list
 ```
 
@@ -138,10 +138,8 @@ pvesh get /nodes
 # Cluster log
 journalctl -u pve-cluster --no-pager -n 50
 
-# Apply a tag to all VMs matching a pattern
-for vmid in $(pvesh get /cluster/resources --type vm | jq -r '.data[].vmid'); do
-    pvesh set /nodes/<node>/qemu/$vmid/config --tags "homelab,automated"
-done
+# Tag a guest: this replaces its existing tags, so one at a time, on its own node
+pvesh set /nodes/<node>/qemu/<vmid>/config --tags "homelab,automated"
 ```
 
 ## Pitfalls

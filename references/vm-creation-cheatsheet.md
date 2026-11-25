@@ -2,7 +2,7 @@
 
 Common `qm create` invocations for typical homelab VMs. All assume
 an ISO storage pool named `iso` and a VM disk storage pool named
-`vmdata` (or whichever you registered with `pvesm add dir`).
+`data` (or whichever you registered with `pvesm add dir`).
 
 ## General command shape
 
@@ -35,17 +35,21 @@ qm create 100 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:32,format=qcow2 \
+    --scsi0 data:32,format=qcow2 \
     --ide2 iso:iso/ubuntu-24.04.2-live-server-amd64.iso,media=cdrom \
     --boot order=ide2 \
-    --agent enabled=1
+    --agent enabled=1 &&
+  qm config 100 | grep '^smbios1:' > ~/vm100.id   # marks it as ours for the edit below
 ```
 
 After install, switch boot order to disk-only and detach ISO:
 
 ```bash
-qm set 100 --boot order=scsi0
-qm set 100 --ide2 none
+# Only on the VM created above (a name can match by chance, its SMBIOS UUID can't):
+# after a refused create, 100 is someone else's guest.
+[ -s ~/vm100.id ] && qm config 100 | grep -qxF -f ~/vm100.id &&
+  qm set 100 --boot order=scsi0 &&
+  qm set 100 --ide2 none
 ```
 
 ## Debian 12 (Bookworm)
@@ -60,7 +64,7 @@ qm create 101 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:32,format=qcow2 \
+    --scsi0 data:32,format=qcow2 \
     --ide2 iso:iso/debian-12.5.0-amd64-netinst.iso,media=cdrom \
     --boot order=ide2 \
     --agent enabled=1
@@ -71,10 +75,11 @@ qm create 101 \
 For headless VMs that auto-configure user/ssh/network on first boot:
 
 ```bash
+# Chained: a failed create means 102 is not yours to resize or convert.
 # 1. Download the cloud image to the host (or use the API's download-url with
 #    content=import and a checksum; see SKILL.md)
 wget https://cloud-images.ubuntu.com/noble/current/noble-server-cloudimg-amd64.img \
-    -O /root/noble-server-cloudimg-amd64.img
+    -O /root/noble-server-cloudimg-amd64.img &&
 
 # 2. Create the VM referencing that image as the disk source
 qm create 102 \
@@ -84,16 +89,16 @@ qm create 102 \
     --net0 virtio,bridge=vmbr0 \
     --scsihw virtio-scsi-single \
     --ostype l26 \
-    --scsi0 vmdata:0,import-from=/root/noble-server-cloudimg-amd64.img \
-    --ide2 vmdata:cloudinit \
+    --scsi0 data:0,import-from=/root/noble-server-cloudimg-amd64.img \
+    --ide2 data:cloudinit \
     --boot order=scsi0 \
     --serial0 socket --vga serial0 \
     --agent enabled=1 \
     --ciuser <user> \
     --ipconfig0 ip=dhcp \
     --ciupgrade 0 \
-    --sshkeys /root/.ssh/authorized_keys
-qm resize 102 scsi0 20G   # the imported disk is only as big as the image
+    --sshkeys /root/.ssh/authorized_keys &&
+qm resize 102 scsi0 20G &&   # the imported disk is only as big as the image
 
 # 3. Convert to a template for cloning (optional)
 qm template 102
@@ -117,14 +122,15 @@ qm create 103 \
     --cores 4 \
     --net0 virtio,bridge=vmbr0 \
     --ostype win11 \
-    --scsi0 vmdata:64,format=qcow2 \
+    --scsi0 data:64,format=qcow2 \
     --ide2 iso:iso/Win11_23H2_English_x64v1.iso,media=cdrom \
     --boot order=ide2 \
     --bios ovmf \
-    --efidisk0 vmdata:1,format=qcow2 \
-    --tpmstate0 vmdata:1,version=v2.0 \
+    --efidisk0 data:1,format=qcow2 \
+    --tpmstate0 data:1,version=v2.0 \
     --machine pc-q35-8.1 \
-    --agent enabled=1
+    --agent enabled=1 &&
+  qm config 103 | grep '^smbios1:' > ~/vm103.id   # marks it as ours for the edit below
 ```
 
 The TPM state file lives on the same storage as the disk. For the
@@ -132,7 +138,8 @@ VirtIO drivers ISO (needed for Windows to see the virtio NIC and
 disk during install), attach a second CD-ROM:
 
 ```bash
-qm set 103 --ide3 iso:iso/virtio-win-0.1.240.iso,media=cdrom
+[ -s ~/vm103.id ] && qm config 103 | grep -qxF -f ~/vm103.id &&
+  qm set 103 --ide3 iso:iso/virtio-win-0.1.240.iso,media=cdrom
 ```
 
 ## LXC container (Debian 12)
@@ -141,9 +148,10 @@ LXC is faster to provision than a full VM. Requires a Debian template
 on a storage pool with `vztmpl` content type:
 
 ```bash
+# pct create exits 0 when --start fails, so the last line looks.
 # Download template once
-pveam update
-pveam download local debian-12-standard_12.5-1_amd64.tar.zst
+pveam update &&
+pveam download local debian-12-standard_12.5-1_amd64.tar.zst &&
 
 # Create container
 pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
@@ -151,11 +159,12 @@ pct create 200 local:vztmpl/debian-12-standard_12.5-1_amd64.tar.zst \
     --memory 1024 \
     --cores 2 \
     --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-    --rootfs vmdata:16 \
+    --rootfs data:16 \
     --features nesting=1 \
     --unprivileged 1 \
     --password <bcrypt-or-plaintext> \
-    --start 1
+    --start 1 &&
+[ "$(pct status 200)" = "status: running" ]
 ```
 
 The `--password` value, if not a bcrypt hash, must be wrapped in
@@ -172,7 +181,7 @@ qm resize <vmid> scsi0 +10G
 qm set <vmid> --net1 virtio,bridge=vmbr0,tag=10
 
 # Add a data disk on a different storage pool
-qm set <vmid> --scsi1 vmdata2a:100
+qm set <vmid> --scsi1 data2:100
 
 # Snapshot before a risky change
 qm snapshot <vmid> before-upgrade

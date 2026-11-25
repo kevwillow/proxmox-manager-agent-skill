@@ -84,6 +84,8 @@ while IFS= read -r -d '' iso; do
     ISO_FILES+=("$iso")
     TOTAL_BYTES=$((TOTAL_BYTES + SIZE))
 done < <(find "$VENTOY_PATH" -maxdepth 3 -name "*.iso" -print0 | sort -z)
+# bash hides a process substitution's failure unless asked.
+wait $! || { echo "ERROR: could not read all of $VENTOY_PATH"; exit 1; }
 
 if [[ ${#ISO_FILES[@]} -eq 0 ]]; then
     echo "No .iso files found. Aborting."
@@ -133,13 +135,11 @@ COPY_OK=0
 COPY_FAIL=0
 for iso in "${ISO_FILES[@]}"; do
     name=$(basename "$iso")
-    SRC_SIZE=$(stat -c %s "$iso")
-    DST_SIZE=$(stat -c %s "$ISO_DIR/$name" 2>/dev/null || echo 0)
-    if [[ "$SRC_SIZE" == "$DST_SIZE" ]]; then
+    if cmp -s "$iso" "$ISO_DIR/$name"; then
         COPY_OK=$((COPY_OK + 1))   # not ((x++)): it returns 1 at 0 and set -e exits
     else
         COPY_FAIL=$((COPY_FAIL + 1))
-        echo "  MISMATCH: $name (src=$SRC_SIZE, dst=$DST_SIZE)"
+        echo "  MISMATCH: $name (contents differ or copy unreadable)"
     fi
 done
 
@@ -153,7 +153,8 @@ fi
 # Show what Proxmox now lists, if the target is registered storage.
 # `pvesm status` has no path column, so ask each storage where its ISOs live.
 STORAGE_ID=""
-for id in $(pvesm status 2>/dev/null | awk 'NR>1 {print $1}'); do
+IDS=$(pvesm status | awk 'NR>1 {print $1}') || { echo "ERROR: copies verified, but pvesm status failed, so Proxmox's view is unknown"; exit 1; }
+for id in $IDS; do
     if [[ "$(pvesm path "$id:iso/x.iso" 2>/dev/null || true)" == "$ISO_DIR/x.iso" ]]; then
         STORAGE_ID=$id
         break

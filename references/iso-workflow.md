@@ -10,9 +10,10 @@ held 9 ISOs (~30GB total).
 Before any bulk copy, run this from the agent user's shell:
 
 ```bash
-# Source: total size of ISOs we're about to copy
-sudo -n find /mnt/source -maxdepth 2 -name "*.iso" -printf "%s\n" | \
-    awk '{s+=$1} END {printf "%.1f GB\n", s/1024/1024/1024}'
+# Source: total size of ISOs we're about to copy. No listing is a failed
+# check, not 0.0 GB.
+sizes=$(sudo -n find /mnt/source -maxdepth 2 -name "*.iso" -printf "%s\n") && [ -n "$sizes" ] &&
+    awk '{s+=$1} END {printf "%.1f GB\n", s/1024/1024/1024}' <<<"$sizes" &&
 
 # Target: free space on the destination
 df -h /var/lib/vz
@@ -25,19 +26,20 @@ disk-full emergency in practice.
 ## The successful path
 
 ```bash
+# Chained: no mount, no copy.
 # 1. Mount the source (sudoers must include mount + mkdir)
-sudo -n mkdir -p /mnt/ventoy
-sudo -n mount /dev/sda1 /mnt/ventoy
+sudo -n mkdir -p /mnt/ventoy &&
+sudo -n mount /dev/sda1 /mnt/ventoy &&
 
 # 2. Verify mount + contents
-mount | grep ventoy
-sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso"
+mountpoint -q /mnt/ventoy &&
+sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso" &&
 
 # 3. Copy
-sudo -n cp /mnt/ventoy/*.iso /var/lib/vz/template/iso/
+sudo -n cp /mnt/ventoy/*.iso /var/lib/vz/template/iso/ &&
 
 # 4. Confirm via Proxmox API
-sudo -n pvesh get /nodes/localhost/storage/local/content --content iso
+sudo -n pvesh get /nodes/localhost/storage/local/content --content iso &&
 
 # 5. Unmount (don't leave USBs mounted indefinitely)
 sudo -n umount /mnt/ventoy
@@ -107,10 +109,12 @@ a full session interruption while the user runs diagnostics manually.
 # Should list every ISO you just copied, with sizes
 sudo -n pvesh get /nodes/localhost/storage/local/content --content iso
 
-# Should match what's mounted at /mnt/ventoy
-sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso" -printf "%f\n" | sort > /tmp/source.txt
-sudo -n ls /var/lib/vz/template/iso/ | sort > /tmp/dest.txt
-diff /tmp/source.txt /tmp/dest.txt
+# Every source name must be in the destination. An empty listing is a failed
+# check, not a match. (Names only: iso-import.sh compares the bytes.)
+src=$(sudo -n find /mnt/ventoy -maxdepth 2 -name "*.iso" -printf "%f\n") && [ -n "$src" ] &&
+  dst=$(sudo -n ls /var/lib/vz/template/iso/) &&
+  diff <(sort <<<"$src") <(grep -xF -- "$src" <<<"$dst" | sort) &&
+  echo "every ISO name is there"
 ```
 
 If `diff` shows any differences, the copy didn't get everything —
@@ -120,12 +124,9 @@ likely an interrupted USB read or a file too large for the destination.
 
 ```bash
 # Always umount before physically unplugging the USB
-sudo -n umount /mnt/ventoy
-
-# Verify
-mount | grep ventoy   # should be empty
-
-# Then it's safe to unplug
+sudo -n umount /mnt/ventoy &&
+  awk '$2 == "/mnt/ventoy" {found=1} END {exit found}' /proc/self/mounts &&
+  echo "safe to unplug"
 ```
 
 `umount` on a busy filesystem will fail with `target is busy` — usually

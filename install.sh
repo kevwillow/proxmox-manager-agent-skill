@@ -23,7 +23,7 @@
 #
 # What gets installed:
 #   SKILL.md                              -> the skill itself
-#   references/, scripts/, templates/     -> supporting files
+#   references/, scripts/, templates/, runbooks/ -> supporting files
 #   README.md is NOT installed (skill loaders don't need it)
 
 set -euo pipefail
@@ -118,6 +118,7 @@ SKILL_SRC="$REPO_ROOT/SKILL.md"
 REFS_SRC="$REPO_ROOT/references"
 SCRIPTS_SRC="$REPO_ROOT/scripts"
 TEMPLATES_SRC="$REPO_ROOT/templates"
+RUNBOOKS_SRC="$REPO_ROOT/runbooks"
 
 # --- Validate source files exist ---
 if [[ "$ACTION" != "list" && ! -f "$SKILL_SRC" ]]; then
@@ -141,7 +142,7 @@ do_install() {
     fi
 
     echo "[$agent] Installing to $target ..."
-    mkdir -p "$target/references" "$target/scripts" "$target/templates"
+    mkdir -p "$target/references" "$target/scripts" "$target/templates" "$target/runbooks"
 
     # SKILL.md is mandatory
     if [[ ! -f "$SKILL_SRC" ]]; then
@@ -150,10 +151,11 @@ do_install() {
     fi
     cp "$SKILL_SRC" "$target/SKILL.md"
 
-    # references/, scripts/, templates/ — copy if they exist
+    # references/, scripts/, templates/, runbooks/ — copy if they exist
     [[ -d "$REFS_SRC" ]]      && cp -r "$REFS_SRC/."      "$target/references/"
     [[ -d "$SCRIPTS_SRC" ]]   && cp -r "$SCRIPTS_SRC/."   "$target/scripts/"
     [[ -d "$TEMPLATES_SRC" ]] && cp -r "$TEMPLATES_SRC/." "$target/templates/"
+    [[ -d "$RUNBOOKS_SRC" ]]  && cp -r "$RUNBOOKS_SRC/."  "$target/runbooks/"
 
     # Make scripts executable
     if [[ -d "$target/scripts" ]]; then
@@ -168,6 +170,7 @@ do_install() {
     echo "  $target/references/ ($(ls "$target/references" 2>/dev/null | wc -l) files)"
     echo "  $target/scripts/   ($(ls "$target/scripts" 2>/dev/null | wc -l) files)"
     echo "  $target/templates/ ($(ls "$target/templates" 2>/dev/null | wc -l) files)"
+    echo "  $target/runbooks/  ($(ls "$target/runbooks" 2>/dev/null | wc -l) files)"
 }
 
 # --- do_uninstall: remove one agent's installation ---
@@ -208,6 +211,7 @@ do_list() {
     echo "  references/  ($(ls "$REFS_SRC" 2>/dev/null | wc -l) files)"
     echo "  scripts/     ($(ls "$SCRIPTS_SRC" 2>/dev/null | wc -l) files)"
     echo "  templates/   ($(ls "$TEMPLATES_SRC" 2>/dev/null | wc -l) files)"
+    echo "  runbooks/    ($(ls "$RUNBOOKS_SRC" 2>/dev/null | wc -l) files)"
 }
 
 # --- Dispatch ---

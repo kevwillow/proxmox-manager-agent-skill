@@ -9,7 +9,7 @@
 #   1. Validates the sudoers file syntax BEFORE installing (visudo -c)
 #   2. Installs to /etc/sudoers.d/zen-agent with 0440 perms
 #   3. Confirms zen-agent user exists; creates if missing
-#   4. Runs a smoke test (sudo -n -l as zen-agent)
+#   4. Runs a smoke test (sudo -n qm list as zen-agent)
 #
 # Required: zen-agent user must already exist (or root will create it
 # with passwd -l, no password login).
@@ -63,20 +63,25 @@ visudo -c -f "$SUDOERS_DST"
 
 # 5. Smoke test (must run as the agent user)
 echo
-echo "Smoke test: 'sudo -n -l' as $AGENT_USER..."
-if sudo -u "$AGENT_USER" sudo -n -l &>/dev/null; then
-    echo "OK — $AGENT_USER can sudo without a password."
+echo "Smoke test: 'sudo -n qm list' as $AGENT_USER..."
+# 'sudo -l' succeeds whenever any rule exists, so run a real allowed command.
+SMOKE=0
+if sudo -u "$AGENT_USER" sudo -n qm list >/dev/null; then
+    echo "OK — $AGENT_USER ran qm list as root without a password."
     echo
     echo "Loaded rules (first 20):"
-    sudo -u "$AGENT_USER" sudo -n -l | head -20
+    sudo -u "$AGENT_USER" sudo -n -l | sed -n '1,20p'   # not head: pipefail + SIGPIPE
 else
-    echo "WARNING: 'sudo -n -l' failed for $AGENT_USER."
+    echo "ERROR: 'sudo -n qm list' failed for $AGENT_USER."
     echo "Possible causes:"
-    echo "  - The agent user's SSH key is not installed yet"
-    echo "  - The user hasn't logged in yet"
+    echo "  - A rule in /etc/sudoers or another sudoers.d file overrides this one"
     echo "  - Default secure_path in /etc/sudoers is restrictive"
-    echo
-    echo "Continue with: sudo -u $AGENT_USER sudo -n -l"
+    echo "  - pve-cluster is not running, so qm itself fails"
+    SMOKE=1
+fi
+if (( SMOKE )); then
+    echo "NOT done: installed, but not working."
+    exit 1
 fi
 
 echo

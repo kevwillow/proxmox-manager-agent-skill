@@ -1,5 +1,129 @@
 # Changelog
 
+## 1.6.0 (2026-11-25)
+
+Measured on PVE 9.2.2 with Proximo 0.56.0, and re-run on PVE 9.2.32 and 8.4.21.
+All eleven runbooks were also followed by an AI agent on 9.2.32 and 8.4.21. On PVE 8,
+listing pending updates needs `Sys.Modify` on the node, so with an audit-only token
+`update_check.md` reports them unread.
+
+- **Multi-node, measured on a two-node PVE 9.2.41 cluster:** the test guests on one
+  node, Proximo talking to the other. The scripted suite passed (52/52) and an AI agent
+  followed all eleven runbooks clean. `backup_failures` and `backup_coverage` read every
+  node, as written; `cert_expiry` and `storage_capacity` were given one node and
+  read only that one.
+- **The restore test's host-device stop, measured on 9.2.41:** a restore to a new id
+  never kept a disk path starting with `/`. With the default, PVE backed up the
+  passed-through disk and restored it as a new volume of the same size; with
+  `backup=0` the copy had no such disk. The stop stays as a guard. Not run on PVE 8,
+  and multi-node not run on PVE 8 or with shared storage, HA or live migration.
+- **Wording fixes in nine runbooks from a last proofread,** each with a check that fails on
+  the old text: the dev VM clean-up runs only after a failed step; `net0` is checked in the key
+  list; the snapshot restart applies only after a rollback; an offline node makes no-backup
+  unknown; the update report names repository warnings; `proximo_` snapshots match by prefix;
+  the restore copy's stop and delete read as two steps; and two grammar slips. On the final
+  text a fresh Claude Code session, with only Proximo's tools, followed all eleven on nested
+  PVE 9.3.1. Every check passed after two harness fixes (one check misread the agent's
+  "not every backup succeeded", so that report was re-scored; one trial lacked the
+  operator's answer for an unreadable storage, so it was re-run).
+
+- Three Proximo runbooks, each run live on PVE 9.2.32:
+  - `runbooks/ct_restore_test.md`: the restore test for containers. Container
+    backups leave out the system temp folders, so the known file must be
+    elsewhere. A task ending `WARNINGS` (the Debian 13 container tested warned
+    about nesting on restore and on each start) counts as finished and is reported.
+  - `runbooks/backup_coverage.md`, read-only: guests in no backup job, guests
+    with no recent backup, and storages that could not be read. A guest is
+    "unknown", never "none", while any storage is unread.
+  - `runbooks/update_check.md`, read-only: subscription, the last package index
+    refresh and whether it worked, repository problems, pending updates.
+  - Both read-only ones read lists plain first: Proximo refuses `fields=` on an
+    empty list, and an over-cap list can come back summarized with no data.
+
+- Five Proximo runbooks, each run live on PVE 9.2.32 with an AI agent
+  following it unaided and root checking the result:
+  - `runbooks/backup_failures.md`, read-only: backups in a window that failed
+    or warned (job runs cover many guests, so it reads each log, in pages),
+    and enabled jobs with no run seen.
+  - `runbooks/storage_capacity.md`, read-only: storage and thin pools nearly
+    full (data and metadata), and overcommitted thin pools. Proxmox lists a
+    guest's disks only with `VM.Config.Disk` on it or `Datastore.Allocate` on
+    the storage, so an audit-only token reports overcommit as unknown.
+  - `runbooks/cert_expiry.md`, read-only: days left per certificate, the one
+    the web UI serves, and whether ACME is set up for it (set up, not proven
+    to renew).
+  - `runbooks/snapshot_hygiene.md`: old snapshots and leftover `proximo_` ones;
+    deletes only what the operator picks, each re-read first.
+  - `runbooks/decommission_guest.md`: remove a guest for good. Stops on
+    protection or a lock, reports the backup kept, its HA entry and backup
+    jobs, and re-reads its identity before the stop and the delete.
+- **Safety: the restore test recipe could boot a copy on the network.** Run as
+  written on a VM with two NICs it left `net1` up, kept `onboot=1` and
+  `protection=1`, failed silently when the restore was still running, and
+  gave the copy the original's MAC when `net0` was taken from the original.
+  It now waits, calls the new `pve_isolate_copy` (every NIC down with the
+  copy's own MAC, both flags cleared, read back) and starts only if that
+  passes. Run as written: both links down, no address, the known file read,
+  the original unchanged.
+- **Safety: `add-nvme-storage.sh` could offer to wipe the boot drive.** It
+  compared the typed serial with sysfs, which pads NVMe serials and has none
+  for SATA. It also accepted a typo, an empty answer or a partition. All are
+  refused now, and so is any disk that is not blank: the script no longer
+  repurposes used disks; the user clears those by hand.
+- **`pve_wait` counted a task that ended `WARNINGS: <n>` as failed.** Found by
+  running the network dead-man recipe on a host whose interfaces file has no
+  SDN `source` line: the apply warns, so the chain stopped before disarming
+  and the timer rolled back a good change. `pve_wait` and `pve_task` now
+  also return 0 on exactly `WARNINGS: <number>` and print the task's log to
+  stderr; anything else still fails.
+- **Runbook fixes from an AI agent following each one unaided** (Codex, with
+  only Proximo's tools): the restore tests now take the copy's links down in
+  their own step and start it only after the read-back (one agent run started
+  the copy with the gate buried mid-step); the dev VM runbook never reads the guest's
+  address list, which Proximo always cuts (with DHCP the operator matches
+  net0's MAC to a lease).
+- **A failed, empty or cut check no longer reads as success:**
+  - `pve_api` returns non-zero on a refused request (curl 7.76+); new
+    `pve_task` sends and waits. Checks hold on jq 1.6, where `-e` passes on
+    empty input.
+  - Recipes with several writes stop at the first failed one, so a refused
+    create never leads to changes on someone else's guest, pool or user, and
+    a firewall is never switched on after its allow rule was refused.
+  - fstab entries are proven by remounting from them.
+  - **Safety: firewall recipes created their allow rules switched off.** PVE
+    defaults a new rule to `enable 0` and exits 0; every one now says
+    `--enable 1`.
+  - Bootstrap saves no pin made from empty input.
+  - The restore test exits 0 only when the data matched.
+  - The status scripts show failed reads and exit non-zero; `lxc-from-template`
+    checks the container is running; `iso-import` compares bytes; the sudoers
+    smoke test runs a real command.
+  - An empty guest list is no longer called proof of no guests.
+  - The cluster "tag all" loop is gone: it never worked, and if fixed it would
+    have overwritten every guest's tags.
+- The `proximo arm` notes now describe the ticket login (0.52+).
+- Examples use stock storage names (`local-lvm`, `local`) or neutral ones
+  (`data`), and the token setup starts with an empty template list.
+- `runbooks/snapshot_change.md`: change a VM with a snapshot to fall back on,
+  as a Proximo operator runbook. Every path run on Proximo 0.56.0.
+- `runbooks/clone_dev_vm.md`: build a dev VM from a cloud-init template
+  (full clone, user, key and address, boot, hostname read back; the identity,
+  with net0's MAC, is re-read before the stop and before the delete).
+  Every path run on Proximo 0.56.0, and the login checked by SSH.
+- **Safety:** the restore test needs an accepted write and a matching
+  read-back before it starts the copy, compares the file exactly, and removes
+  the copy only while that ID still holds it. The API token is no longer in
+  curl's arguments, and requests time out.
+- `runbooks/restore_test.md`: the same test as a Proximo operator runbook,
+  installed by `install.sh`.
+- Corrected for 0.56.0: `proximo-core` needs `--confirm` to change anything;
+  the restore plan notes `unique=1`; `proximo_read` takes `args`; an empty
+  backup list while disarmed is refused with a reason; the license is
+  AGPL-3.0-or-later.
+- New gotchas: exit 0 on failure, lost guest-exec output, how each lane spells
+  a command's arguments, capped config reads, token secrets left by deleting
+  the user first.
+
 ## 1.5.2 (2026-10-24)
 
 Re-checked every Proximo note against the Proximo 0.46.2 source (still the
@@ -175,7 +299,7 @@ Fixed:
 - Add OpenClaw support to `install.sh` (`--agent openclaw`,
   `--openclaw-workspace <path>`). OpenClaw workspace path defaults to
   `~/.openclaw/workspace`; users on the literal Windows-style path
-  (`C:\Users\kev\.openclaw\workspace`) can override with the flag.
+  (`C:\Users\<you>\.openclaw\workspace`) can override with the flag.
 - Update SKILL.md Cross-Agent Compatibility table with OpenClaw notes.
 - Update README.md manual install section with OpenClaw example.
 - Verified OpenClaw picks the skill up via `openclaw skills list`.

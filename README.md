@@ -37,7 +37,32 @@ server makes the API calls, the skill supplies the rules and the pitfalls.
 Proximo with a read-only token and a pool-scoped write token
 (`templates/proximo-token-setup.sh`), and lists what was measured through it.
 
-## What's new in 1.5.0
+## What's new in 1.6.0
+
+- **Safety fix: the restore test could put a copy on the network.** It
+  unplugged only `net0`, did not wait for the restore, and could be read as
+  "reuse the original's `net0`", MAC included. It now unplugs every NIC from
+  the copy's own values, clears `onboot` and `protection`, and starts nothing
+  until that reads back (`pve_isolate_copy` in `scripts/pve-api.sh`).
+- **Safety fix: `add-nvme-storage.sh` could offer to wipe the boot drive.**
+  Its serial check failed on padded NVMe serials and on every SATA disk. It
+  now compares what `lsblk` reports and takes only a blank disk.
+- Failed, empty or cut checks no longer read as success, in the helpers,
+  scripts and recipes. `pve_api` now returns non-zero when Proxmox refuses
+  (needs curl 7.76+).
+- The same procedure as a Proximo runbook: `runbooks/restore_test.md`, and a
+  second one to change a VM with a snapshot to fall back on:
+  `runbooks/snapshot_change.md`, and a third to build a dev VM from a
+  cloud-init template: `runbooks/clone_dev_vm.md`. Three more: a container
+  restore test (`runbooks/ct_restore_test.md`), and two read-only checks,
+  `runbooks/backup_coverage.md` and `runbooks/update_check.md`. Five more:
+  three read-only checks (`runbooks/backup_failures.md`,
+  `runbooks/storage_capacity.md`, `runbooks/cert_expiry.md`), snapshot cleanup
+  (`runbooks/snapshot_hygiene.md`) and guest removal
+  (`runbooks/decommission_guest.md`).
+- Proximo notes re-measured on 0.56.0.
+
+## What was new in 1.5.0
 
 - Updated for Proximo 0.45+, which replaced its per-task tools with a few
   tools that take a raw API path: new setup, the API paths for common work,
@@ -115,7 +140,7 @@ and say "install this skill." The agent can clone the repo and run
 
 ### Manual install
 
-Copy `SKILL.md` and the `references/`, `scripts/`, `templates/`
+Copy `SKILL.md` and the `references/`, `scripts/`, `templates/`, `runbooks/`
 directories into the right place for your agent:
 
 | Agent | Path |
@@ -129,21 +154,21 @@ directories into the right place for your agent:
 
 ```bash
 # Example for Hermes
-mkdir -p ~/.hermes/skills/proxmox-manager-agent
-cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.hermes/skills/proxmox-manager-agent/
+mkdir -p ~/.hermes/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.hermes/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.hermes/skills/proxmox-manager-agent/ &&
 chmod +x ~/.hermes/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for OpenClaw (note the workspace, not ~/.openclaw/skills/)
-mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent
-cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.openclaw/workspace/skills/proxmox-manager-agent/
+mkdir -p ~/.openclaw/workspace/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.openclaw/workspace/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.openclaw/workspace/skills/proxmox-manager-agent/ &&
 chmod +x ~/.openclaw/workspace/skills/proxmox-manager-agent/scripts/*.sh
 
 # Example for Cursor
-mkdir -p ~/.cursor/skills/proxmox-manager-agent
-cp SKILL.md ~/.cursor/skills/proxmox-manager-agent/
-cp -r references scripts templates ~/.cursor/skills/proxmox-manager-agent/
+mkdir -p ~/.cursor/skills/proxmox-manager-agent &&
+cp SKILL.md ~/.cursor/skills/proxmox-manager-agent/ &&
+cp -r references scripts templates runbooks ~/.cursor/skills/proxmox-manager-agent/ &&
 chmod +x ~/.cursor/skills/proxmox-manager-agent/scripts/*.sh
 ```
 
@@ -193,8 +218,9 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
 3. **Create the user and install the sudoers file** (on the Proxmox host as
    root; the script creates `zen-agent` with a locked password):
    ```bash
-   scp templates/zen-agent-sudoers templates/install-sudoers.sh root@<proxmox-host>:/tmp/
-   ssh root@<proxmox-host> 'bash /tmp/install-sudoers.sh'
+   D=$(ssh root@<proxmox-host> 'mktemp -d') && [ -n "$D" ] &&
+   scp templates/zen-agent-sudoers templates/install-sudoers.sh "root@<proxmox-host>:$D/" &&
+   ssh root@<proxmox-host> "bash $D/install-sudoers.sh"
    ```
 
 4. **Install the public key, locked to the agent's source IP.** The account
@@ -203,17 +229,21 @@ Rehearsed end to end on Debian 13, the base of PVE 9.
    session from the agent host shows it).
    ```bash
    # As root on the Proxmox host; paste the contents of zen-agent-proxmox.pub
-   install -d -m 700 -o zen-agent -g zen-agent /home/zen-agent/.ssh
-   printf 'from="<agent-ip>",restrict,pty %s\n' '<public key line>' > /home/zen-agent/.ssh/authorized_keys
-   chown zen-agent: /home/zen-agent/.ssh/authorized_keys
+   install -d -m 700 -o zen-agent -g zen-agent /home/zen-agent/.ssh &&
+   printf 'from="<agent-ip>",restrict,pty %s\n' '<public key line>' > /home/zen-agent/.ssh/authorized_keys &&
+   chown zen-agent: /home/zen-agent/.ssh/authorized_keys &&
    chmod 600 /home/zen-agent/.ssh/authorized_keys
    ```
    `restrict` turns off forwarding for this key and `pty` keeps a terminal.
 
 5. **Install the sshd Match block** (key-only auth, no forwarding):
    ```bash
-   scp templates/99-zen-agent-sshd.conf root@<proxmox-host>:/etc/ssh/sshd_config.d/
-   ssh root@<proxmox-host> 'sshd -t && systemctl reload ssh'
+   # Refuses to replace an existing drop-in, and takes the new one out if sshd rejects it.
+   D=$(ssh root@<proxmox-host> 'mktemp -d') && [ -n "$D" ] &&
+   scp templates/99-zen-agent-sshd.conf "root@<proxmox-host>:$D/" &&
+   ssh root@<proxmox-host> "C=/etc/ssh/sshd_config.d/99-zen-agent-sshd.conf; test ! -e \$C &&
+     install -m 644 $D/99-zen-agent-sshd.conf \$C &&
+     { sshd -t && systemctl reload ssh || { rm \$C; exit 1; }; }"
    ```
 
 6. **Final verification:**
@@ -248,7 +278,7 @@ proxmox-manager-agent-skill/
 │   ├── mcp-servers.md          Proximo MCP: setup, tool map, measured gotchas
 │   └── cluster.md              multi-node, HA rules, live migration
 ├── scripts/
-│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_vm_ip
+│   ├── pve-api.sh              Sourceable API helpers: pve_api, pve_wait, pve_task, pve_vm_ip, pve_isolate_copy
 │   ├── vm-from-iso.sh          Wrapper around qm create
 │   ├── lxc-from-template.sh    Wrapper around pct create
 │   ├── iso-import.sh           Ventoy USB → Proxmox ISO with size guard
@@ -260,7 +290,12 @@ proxmox-manager-agent-skill/
 │   ├── 99-zen-agent-sshd.conf  Drop-in sshd Match block
 │   ├── install-sudoers.sh      Install + validate the sudoers file
 │   └── proximo-token-setup.sh  Read + pool-scoped write tokens for an MCP server
+├── runbooks/
+│   ├── clone_dev_vm.md         Build a dev VM from a cloud-init template
+│   ├── restore_test.md         Prove a VM backup, as a Proximo operator runbook
+│   └── snapshot_change.md      Change a VM with a snapshot to fall back on
 └── tests/
+    ├── checks.test.sh          Offline test: a failed check never reads as success
     └── pve-api.test.sh         Offline test for scripts/pve-api.sh
 ```
 

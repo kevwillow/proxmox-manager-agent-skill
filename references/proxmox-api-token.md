@@ -26,8 +26,9 @@ the only option here that actually limits what a leaked credential can do.
 ## Creating an API token
 
 ```bash
+# Chained: "already exists" means someone else's user, so mint nothing on it.
 # Create a user for the agent (one-time, as root)
-pveum user add agent@pve --comment "AI agent"
+pveum user add agent@pve --comment "AI agent" &&
 
 # Create the token. --expire is a Unix timestamp, NOT a number of days.
 pveum user token add agent@pve t1 --comment "Agent token" \
@@ -49,10 +50,11 @@ Pool-scoped setup, all built-in roles (see SKILL.md, *Mode A-narrow*, for
 what was measured on PVE 9.2.2):
 
 ```bash
-pveum pool add agent
-pveum acl modify /pool/agent                       --tokens 'agent@pve!t1' --roles PVEVMAdmin
-pveum acl modify /storage/<vm-storage>             --tokens 'agent@pve!t1' --roles PVEDatastoreUser
-pveum acl modify /sdn/zones/localnetwork/<bridge>  --tokens 'agent@pve!t1' --roles PVESDNUser
+# Chained: "already exists" means someone else's pool, so grant nothing on it.
+pveum pool add agent &&
+pveum acl modify /pool/agent                       --tokens 'agent@pve!t1' --roles PVEVMAdmin &&
+pveum acl modify /storage/<vm-storage>             --tokens 'agent@pve!t1' --roles PVEDatastoreUser &&
+pveum acl modify /sdn/zones/localnetwork/<bridge>  --tokens 'agent@pve!t1' --roles PVESDNUser &&
 pveum acl modify /vms/<template-vmid>              --tokens 'agent@pve!t1' --roles PVETemplateUser
 ```
 
@@ -69,14 +71,15 @@ need it. List the current privileges of a role with
 
 ```bash
 H=https://pve.example.com:8006
-AUTH="Authorization: $(cat ~/.config/pve/pve.token)"
+# The header goes through a file descriptor, so the token is not in curl's arguments.
+auth() { printf 'Authorization: %s\n' "$(cat ~/.config/pve/pve.token)"; }
 
 # List VMs
-curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H @<(auth) \
     "$H/api2/json/cluster/resources?type=vm"
 
 # Create a VM (form-encoded, as the web UI does)
-curl -sS -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H "$AUTH" -X POST \
+curl -sS --fail-with-body -k --pinnedpubkey "$(cat ~/.config/pve/pve.pin)" -H @<(auth) -X POST \
     "$H/api2/json/nodes/<node>/qemu" \
     --data-urlencode vmid=8100 --data-urlencode name=test \
     --data-urlencode memory=2048 --data-urlencode cores=2
@@ -92,8 +95,9 @@ locally.
 pveum user token delete agent@pve t1
 ```
 
-The token is invalid at once. The user remains. Deleting the user
-(`pveum user delete agent@pve`) removes its tokens and its ACL entries too.
+The token is invalid at once. The user remains. Remove every token before
+deleting the user: `pveum user delete agent@pve` on its own left the tokens'
+secrets in `/etc/pve/priv/token.cfg` (measured on PVE 9.2.2).
 
 ## Security notes
 

@@ -4,8 +4,9 @@
 # PVE API token). Edit the settings below, then run ONCE on the Proxmox host as root:
 #   bash proximo-token-setup.sh
 #
-# It makes two privsep tokens on user proximo@pve, the pair Proximo's
-# `proximo arm` / `proximo disarm` swap between:
+# It makes two privsep tokens on user proximo@pve: the read token Proximo serves
+# when disarmed, and the write token for a job served by configuration. (Since
+# 0.52 a person arms with a login, `proximo-core arm`, not with this token.)
 #   proximo@pve!read    PVEAuditor on /: audit everything, change nothing (it does NOT
 #                       see backup archives: PVE lists them only to a holder of
 #                       Datastore.AllocateSpace on the storage and VM.Backup on the guest)
@@ -45,16 +46,16 @@
 #   move or destroy the guests in pool agent, then: pveum pool delete agent
 #   pvesh set /pools/templates --vms <ids> --delete 1; pveum pool delete templates
 #
-# Tested on PVE 9.2.2 (2026-10-23) with Proximo 0.46.2, templates 9000-9015,
-# storages vmdata and shared, bridge vmbr0: clone/snapshot/backup/restore/delete
+# Tested on PVE 9.2.2 (2026-10-23) with Proximo 0.46.2, a list of templates,
+# a VM-disk storage, a backup storage and bridge vmbr0: clone/snapshot/backup/restore/delete
 # inside the pool worked; a clone outside the pool returned 403.
 set -euo pipefail
 umask 077
 
 # --- Settings: edit these ---
-TEMPLATE_IDS="$(seq -s, 9000 9015)"   # comma-separated VMIDs of the templates to allow cloning (may be empty)
-VM_STORAGE=vmdata                     # where new guests' disks go
-BACKUP_STORAGE=shared                 # where backups go
+TEMPLATE_IDS=""                       # comma-separated VMIDs of the templates to allow cloning, e.g. "9000,9001" (may be empty)
+VM_STORAGE=local-lvm                  # where new guests' disks go
+BACKUP_STORAGE=local                  # where backups go
 BRIDGE=vmbr0                          # the bridge guests attach to
 WRITE_EXPIRE_HOURS=0                  # whole hours; 0 = never. Proximo recommends an expiry on the write token
 

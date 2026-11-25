@@ -8,7 +8,7 @@
 # Examples:
 #   lxc-from-template.sh --hostname pihole --template debian-12-standard_12.5-1_amd64.tar.zst --memory 512 --cores 1
 #   lxc-from-template.sh --hostname nginx --template alpine-3.20-default_20240605_amd64.tar.xz --bridge vmbr1 --ip 192.168.50.50/24
-#   lxc-from-template.sh --hostname nodered --template ubuntu-24.04-standard_24.04-2_amd64.tar.zst --storage vmdata --disk 16
+#   lxc-from-template.sh --hostname nodered --template ubuntu-24.04-standard_24.04-2_amd64.tar.zst --storage local-lvm --disk 16
 #
 # Notes:
 #   - Run on the Proxmox host as root, or as a user with the sudoers allowlist.
@@ -125,6 +125,11 @@ $SUDO pct create "$CTID" "${TPL_STORAGE}:vztmpl/${TEMPLATE}" \
     "${PASS_ARGS[@]}"
 
 echo
+# pct create exits 0 even when --start fails, so look.
+if [[ "$($SUDO pct status "$CTID")" != "status: running" ]]; then
+    echo "ERROR: CT ${CTID} was created but is NOT running. Read the warnings above, then try: pct start ${CTID}" >&2
+    exit 1
+fi
 echo "CT ${CTID} created and started."
 echo "Console:"
 echo "  pct enter ${CTID}    # attach to console"
